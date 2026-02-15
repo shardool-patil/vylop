@@ -1,0 +1,23 @@
+:root {
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  color-scheme: dark;
+  background-color: #1e1e1e;
+}
+
+/* Resetting the global layout */
+body {
+  margin: 0;
+  padding: 0;
+  display: block; 
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+}
+
+#root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  max-width: none;
+}
