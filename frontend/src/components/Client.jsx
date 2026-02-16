@@ -1,52 +1,20 @@
 import React from 'react';
+import Avatar from 'react-avatar';
 
 const Client = ({ username }) => {
-    // Generate a consistent color based on the username
-    const stringToColor = (string) => {
-        let hash = 0;
-        for (let i = 0; i < string.length; i++) {
-            hash = string.charCodeAt(i) + ((hash << 5) - hash);
-        }
-        return `hsl(${hash % 360}, 70%, 50%)`;
-    };
-
     return (
         <div style={{ 
             display: 'flex', 
             alignItems: 'center', 
-            marginBottom: '15px', 
-            gap: '12px',
-            padding: '5px 10px',
-            borderRadius: '8px',
-            background: 'rgba(255, 255, 255, 0.03)'
-        }}>
-            {/* Custom Avatar Circle */}
-            <div style={{
-                width: '35px',
-                height: '35px',
-                borderRadius: '10px',
-                backgroundColor: stringToColor(username),
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                color: '#fff',
-                fontWeight: 'bold',
-                fontSize: '0.9rem',
-                textTransform: 'uppercase'
-            }}>
-                {username.charAt(0)}
-            </div>
-            
-            <span style={{ 
-                fontSize: '0.9rem', 
-                fontWeight: '500', 
-                color: '#e0e0e0',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap'
-            }}>
-                {username}
-            </span>
+            marginBottom: '10px', 
+            padding: '8px', 
+            borderRadius: '8px', 
+            background: 'rgba(255,255,255,0.03)',
+            transition: 'background 0.2s'
+        }} className="client-item">
+            <Avatar name={username} size={32} round="8px" />
+            <span style={{ marginLeft: '12px', fontWeight: '500', fontSize: '0.9rem' }}>{username}</span>
+            <div style={{ marginLeft: 'auto', width: '8px', height: '8px', background: '#2ea043', borderRadius: '50%' }}></div>
         </div>
     );
 };

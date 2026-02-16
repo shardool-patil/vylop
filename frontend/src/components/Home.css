@@ -1,0 +1,157 @@
+/* src/components/Home.css */
+
+.homePageWrapper {
+    height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background-color: #0d1117; /* Deep Dark Background */
+    color: #fff;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    position: relative;
+    overflow: hidden;
+}
+
+/* Background decoration (optional subtle glow) */
+.homePageWrapper::before {
+    content: '';
+    position: absolute;
+    top: -50%;
+    left: -50%;
+    width: 200%;
+    height: 200%;
+    background: radial-gradient(circle, rgba(46, 160, 67, 0.05) 0%, transparent 40%);
+    z-index: 0;
+    pointer-events: none;
+}
+
+.formWrapper {
+    background: #161b22;
+    padding: 2.5rem;
+    border-radius: 16px;
+    width: 420px;
+    max-width: 90%;
+    border: 1px solid #30363d;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+    z-index: 1;
+    text-align: left;
+    animation: fadeIn 0.5s ease-out;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.logo-container {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 1.5rem;
+}
+
+.home-logo {
+    height: 40px;
+}
+
+.logo-text {
+    font-size: 1.8rem;
+    font-weight: 800;
+    margin: 0;
+    background: linear-gradient(45deg, #2ea043, #3fb950);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+
+.inputLabel {
+    display: block;
+    margin-bottom: 2rem;
+    color: #8b949e;
+    font-size: 0.95rem;
+    line-height: 1.5;
+}
+
+.inputGroup {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.inputBox {
+    padding: 12px 16px;
+    border-radius: 6px;
+    border: 1px solid #30363d;
+    background: #0d1117;
+    color: #c9d1d9;
+    font-size: 1rem;
+    font-weight: 500;
+    outline: none;
+    transition: all 0.2s ease;
+}
+
+.inputBox:focus {
+    border-color: #2ea043;
+    box-shadow: 0 0 0 3px rgba(46, 160, 67, 0.3);
+}
+
+.inputBox::placeholder {
+    color: #484f58;
+}
+
+.btn {
+    border: none;
+    padding: 12px;
+    border-radius: 6px;
+    font-size: 1rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.joinBtn {
+    background: #238636;
+    color: #ffffff;
+    margin-top: 10px;
+}
+
+.joinBtn:hover {
+    background: #2ea043;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(46, 160, 67, 0.4);
+}
+
+.joinBtn:active {
+    transform: translateY(0);
+}
+
+.createInfo {
+    margin-top: 1.5rem;
+    text-align: center;
+    color: #8b949e;
+    font-size: 0.9rem;
+}
+
+.createNewBtn {
+    color: #2ea043;
+    text-decoration: none;
+    font-weight: 600;
+    cursor: pointer;
+    border-bottom: 1px solid transparent;
+    transition: all 0.2s;
+}
+
+.createNewBtn:hover {
+    color: #3fb950;
+    border-bottom-color: #3fb950;
+}
+
+/* Footer Styling */
+footer {
+    position: fixed;
+    bottom: 20px;
+    text-align: center;
+    width: 100%;
+    color: #484f58;
+    font-size: 0.8rem;
+    z-index: 1;
+}

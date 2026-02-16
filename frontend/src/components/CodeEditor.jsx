@@ -6,6 +6,37 @@ import SockJS from 'sockjs-client';
 import axios from 'axios';
 import toast, { Toaster } from 'react-hot-toast';
 import Client from './Client';
+import './CodeEditor.css'; 
+
+// 1. Define Language Templates
+const CODE_SNIPPETS = {
+    java: `// Welcome to Vylop!
+// Java is selected
+
+public class Main {
+    public static void main(String[] args) {
+        System.out.println("Hello, World!");
+    }
+}`,
+    python: `# Welcome to Vylop!
+# Python is selected
+
+def main():
+    print("Hello, World!")
+
+if __name__ == "__main__":
+    main()`,
+    cpp: `// Welcome to Vylop!
+// C++ is selected
+
+#include <iostream>
+using namespace std;
+
+int main() {
+    cout << "Hello, World!" << endl;
+    return 0;
+}`
+};
 
 const CodeEditor = () => {
     const { roomId } = useParams();
@@ -13,17 +44,22 @@ const CodeEditor = () => {
     const navigate = useNavigate();
     const username = location.state?.username;
 
-    const [code, setCode] = useState("// Welcome to Vylop!\n// Start typing...");
+    // 2. Initialize with Java snippet by default
+    const [code, setCode] = useState(CODE_SNIPPETS["java"]);
     const [language, setLanguage] = useState("java"); 
-    const [users, setUsers] = useState([]); 
+    
     const [output, setOutput] = useState("");
     const [userInput, setUserInput] = useState(""); 
     const [isRunning, setIsRunning] = useState(false);
-    const [isSidebarVisible, setIsSidebarVisible] = useState(true);
+    const [users, setUsers] = useState([]); 
+    const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+    const [messages, setMessages] = useState([]);
+    const [chatMsg, setChatMsg] = useState("");
+    const chatContainerRef = useRef(null);
 
     const isLocalChange = useRef(false);
     const stompClient = useRef(null);
-    const isConnected = useRef(false); // Flag to prevent multiple connections
+    const isConnected = useRef(false);
 
     useEffect(() => {
         if (!username) {
@@ -32,68 +68,89 @@ const CodeEditor = () => {
             return;
         }
 
-        // Prevent multiple connection attempts
         if (isConnected.current) return;
         isConnected.current = true;
 
         const socket = new SockJS('http://localhost:8080/ws');
         const client = Stomp.over(socket);
-        client.debug = () => {}; 
-
+        
         client.connect({}, () => {
             stompClient.current = client;
 
-            // 1. Subscribe to Code Changes
-            client.subscribe(`/topic/code/${roomId}`, (message) => {
-                const body = JSON.parse(message.body);
+            client.subscribe(`/topic/code/${roomId}`, (msg) => {
+                const body = JSON.parse(msg.body);
                 if (!isLocalChange.current) {
                     setCode(body.content);
-                    if (body.language && body.language !== language) setLanguage(body.language);
+                    // Sync language if changed by another user
+                    if (body.language && body.language !== language) {
+                        setLanguage(body.language);
+                    }
                 }
                 isLocalChange.current = false;
             });
 
-            // 2. Subscribe to User List Updates
-            client.subscribe(`/topic/users/${roomId}`, (message) => {
-                const body = JSON.parse(message.body);
+            client.subscribe(`/topic/users/${roomId}`, (msg) => {
+                const body = JSON.parse(msg.body);
                 setUsers(body.activeUsers);
-                
-                // Show toast only if it's not the local user joining
-                if (body.type === "JOIN" && body.username !== username) {
-                    toast.success(`${body.username} joined`, { id: `join-${body.username}` });
-                }
-                if (body.type === "LEAVE") {
-                    toast(`${body.username} left`, { icon: '👋', id: `leave-${body.username}` });
-                }
+                if (body.type === "JOIN" && body.username !== username) toast.success(`${body.username} joined`);
+                if (body.type === "LEAVE") toast(`${body.username} left`);
             });
 
-            // 3. Send JOIN message
-            client.send(`/app/room/${roomId}/join`, {}, JSON.stringify({ username, type: "JOIN" }));
+            client.subscribe(`/topic/chat/${roomId}`, (msg) => {
+                setMessages(prev => [...prev, JSON.parse(msg.body)]);
+            });
 
-        }, (error) => {
+            client.send(`/app/room/${roomId}/join`, {}, JSON.stringify({ username, type: "JOIN" }));
+        }, (err) => {
+            console.error(err);
             isConnected.current = false;
-            toast.error("Connection failed. Retrying...");
         });
 
         return () => {
-            if (stompClient.current && stompClient.current.connected) {
+            if (stompClient.current?.connected) {
                 stompClient.current.send(`/app/room/${roomId}/leave`, {}, JSON.stringify({ username, type: "LEAVE" }));
                 stompClient.current.disconnect();
-                isConnected.current = false;
             }
         };
-    }, [roomId, username, navigate]); // Removed 'language' to prevent effect re-run on toggle
+    }, [roomId, username, navigate]);
+
+    useEffect(() => {
+        if (chatContainerRef.current) chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
+    }, [messages]);
+
+    // 3. Handle Language Change
+    const handleLanguageSelect = (e) => {
+        const newLang = e.target.value;
+        setLanguage(newLang);
+        
+        // Update code to the new language snippet
+        const newCode = CODE_SNIPPETS[newLang];
+        setCode(newCode);
+
+        // Broadcast the language change to other users
+        if (stompClient.current?.connected) {
+            stompClient.current.send(`/app/code/${roomId}`, {}, JSON.stringify({ 
+                sender: username, 
+                content: newCode, 
+                language: newLang, 
+                type: "CODE" 
+            }));
+        }
+    };
+
+    const sendChat = () => {
+        if (chatMsg.trim() && stompClient.current?.connected) {
+            const payload = { sender: username, content: chatMsg };
+            stompClient.current.send(`/app/chat/${roomId}`, {}, JSON.stringify(payload));
+            setChatMsg("");
+        }
+    };
 
     const handleEditorChange = (value) => {
         if (stompClient.current?.connected) {
             isLocalChange.current = true;
             setCode(value);
-            stompClient.current.send(`/app/code/${roomId}`, {}, JSON.stringify({ 
-                sender: username, 
-                content: value, 
-                language, 
-                type: "CODE" 
-            }));
+            stompClient.current.send(`/app/code/${roomId}`, {}, JSON.stringify({ sender: username, content: value, language, type: "CODE" }));
         }
     };
 
@@ -107,68 +164,120 @@ const CodeEditor = () => {
         finally { setIsRunning(false); }
     };
 
-    return (
-        <div style={{ height: "100vh", display: "flex", backgroundColor: "#1e1e1e", overflow: "hidden" }}>
-            <Toaster position="top-right" reverseOrder={false} />
+    const downloadCode = () => {
+        const extensionMap = { "java": "java", "python": "py", "cpp": "cpp" };
+        const blob = new Blob([code], { type: "text/plain" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `Vylop_${roomId}.${extensionMap[language] || "txt"}`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        toast.success("Downloaded!");
+    };
 
-            {/* SIDEBAR */}
-            <div style={{ 
-                width: isSidebarVisible ? "260px" : "0px", 
-                background: "#141516", 
-                borderRight: isSidebarVisible ? "1px solid #333" : "none", 
-                display: "flex", 
-                flexDirection: "column", 
-                transition: "width 0.3s ease-in-out",
-                overflow: "hidden",
-                whiteSpace: "nowrap"
-            }}>
-                <div style={{ padding: "25px", borderBottom: "1px solid #333" }}>
-                    <h1 style={{ color: "#4aed88", margin: 0, fontSize: "1.6rem" }}>⚡ VYLOP</h1>
+    const copyRoomId = () => {
+        navigator.clipboard.writeText(roomId);
+        toast.success("Room ID Copied");
+    };
+
+    return (
+        <div className="app-container">
+            <Toaster position="top-center" toastOptions={{ style: { background: '#333', color: '#fff' } }}/>
+            
+            <div className={`sidebar ${isSidebarOpen ? 'open' : 'closed'}`}>
+                {/* --- HEADER WITH TERMINAL PROMPT --- */}
+                <div className="sidebar-header">
+                    <div className="brand-logo">
+                        <span className="brand-prompt">&gt;</span>
+                        <span>Vylop</span>
+                        <span className="brand-cursor"></span>
+                    </div>
+                    <button className="btn btn-secondary" onClick={() => setIsSidebarOpen(false)} style={{padding: '4px 8px'}}>✕</button>
                 </div>
-                <div style={{ padding: "20px", flexGrow: 1, overflowY: "auto" }}>
-                    <p style={{ color: "#5c5c5c", fontSize: "0.75rem", marginBottom: "20px", fontWeight: "800" }}>CONNECTED</p>
-                    {users.map((u, index) => <Client key={index} username={u} />)}
+
+                <div className="user-list">
+                    <div className="section-title">Online ({users.length})</div>
+                    {users.map((u, i) => <Client key={i} username={u} />)}
                 </div>
-                <div style={{ padding: "20px", display: "flex", flexDirection: "column", gap: "10px" }}>
-                    <button onClick={() => { navigator.clipboard.writeText(roomId); toast.success("Copied!"); }} style={{ background: "#333", color: "#fff", border: "1px solid #444", padding: "10px", borderRadius: "6px", cursor: 'pointer' }}>Copy ID</button>
-                    <button onClick={() => navigate('/')} style={{ background: "#ff4757", color: "#fff", border: "none", padding: "10px", borderRadius: "6px", fontWeight: "700", cursor: 'pointer' }}>Leave</button>
+
+                <div className="chat-area">
+                    <div className="chat-messages" ref={chatContainerRef}>
+                        {messages.map((msg, i) => (
+                            <div key={i} className={`message ${msg.sender === username ? 'self' : 'other'}`}>
+                                <span className="msg-meta">{msg.sender}</span>
+                                <div className="msg-bubble">{msg.content}</div>
+                            </div>
+                        ))}
+                    </div>
+                    <div className="chat-input-area">
+                        <input 
+                            className="modern-input"
+                            value={chatMsg}
+                            onChange={(e) => setChatMsg(e.target.value)}
+                            onKeyDown={(e) => e.key === 'Enter' && sendChat()}
+                            placeholder="Type a message..."
+                        />
+                        <button className="btn btn-icon" onClick={sendChat}>➤</button>
+                    </div>
+                </div>
+
+                <div className="sidebar-header" style={{borderTop: '1px solid var(--border)'}}>
+                    <button className="btn btn-secondary" style={{flex:1, marginRight: '10px'}} onClick={copyRoomId}>Copy ID</button>
+                    <button className="btn btn-danger" style={{flex:1}} onClick={() => navigate('/')}>Leave</button>
                 </div>
             </div>
 
-            {/* MAIN CONTENT AREA */}
-            <div style={{ flexGrow: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
-                {/* TOOLBAR */}
-                <div style={{ padding: "12px 20px", background: "#1e1e1e", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #333" }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
-                        <button onClick={() => setIsSidebarVisible(!isSidebarVisible)} style={{ background: 'none', border: 'none', color: '#4aed88', cursor: 'pointer', fontSize: '1.4rem' }}>
-                            {isSidebarVisible ? "❮" : "❯"} 
-                        </button>
-                        <span style={{ color: "#666", fontFamily: "monospace", fontSize: "0.85rem" }}>{roomId}</span>
+            <div className="main-area">
+                <div className="toolbar">
+                    <div className="toolbar-group">
+                        <button className="btn btn-secondary" onClick={() => setIsSidebarOpen(!isSidebarOpen)}>☰</button>
+                        <span style={{fontWeight: 'bold', fontSize: '0.9rem'}}>{roomId}</span>
                     </div>
-                    <div style={{ display: "flex", gap: "12px" }}>
-                        <select value={language} onChange={(e) => setLanguage(e.target.value)} style={{ background: "#2d2d2d", color: "#fff", border: "1px solid #444", padding: "6px 12px", borderRadius: "6px", cursor: 'pointer' }}>
+                    <div className="toolbar-group">
+                        <select className="lang-select" value={language} onChange={handleLanguageSelect}>
                             <option value="java">Java</option>
                             <option value="python">Python</option>
                             <option value="cpp">C++</option>
                         </select>
-                        <button onClick={runCode} disabled={isRunning} style={{ background: "#4aed88", color: "#000", border: "none", padding: "6px 25px", borderRadius: "6px", fontWeight: "700", cursor: 'pointer' }}>
-                            {isRunning ? "..." : "Run"}
+                        <button className="btn btn-secondary" onClick={downloadCode} title="Download">⬇</button>
+                        <button className="btn btn-primary" onClick={runCode} disabled={isRunning}>
+                            {isRunning ? "Running..." : "▶ Run Code"}
                         </button>
                     </div>
                 </div>
 
-                <div style={{ flexGrow: 1, display: "flex", overflow: "hidden" }}>
-                    <div style={{ flex: 7, minWidth: "400px" }}>
-                        <Editor height="100%" language={language === "cpp" ? "cpp" : language} theme="vs-dark" value={code} onChange={handleEditorChange} options={{ minimap: { enabled: false }, fontSize: 14, automaticLayout: true }} />
+                <div className="editor-split">
+                    <div className="editor-wrapper">
+                        <Editor 
+                            height="100%" 
+                            language={language === "cpp" ? "cpp" : language} 
+                            theme="vs-dark" 
+                            value={code} 
+                            onChange={handleEditorChange} 
+                            options={{ minimap: { enabled: false }, fontSize: 14, fontFamily: 'JetBrains Mono', automaticLayout: true }} 
+                        />
                     </div>
-                    <div style={{ flex: 3, background: "#1e1e1e", display: "flex", flexDirection: "column", borderLeft: "1px solid #333", minWidth: "250px" }}>
-                        <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
-                            <div style={{ padding: "8px 12px", background: "#252526", fontSize: "0.75rem", color: "#5c5c5c", fontWeight: 'bold' }}>INPUT</div>
-                            <textarea value={userInput} onChange={(e) => setUserInput(e.target.value)} style={{ flexGrow: 1, background: "#1e1e1e", color: "#fff", border: "none", padding: "12px", resize: "none", outline: "none", fontFamily: "monospace" }} />
+                    <div className="io-wrapper">
+                        <div className="io-container">
+                            <div className="io-header">
+                                <span>STDIN (Input)</span>
+                            </div>
+                            <textarea 
+                                className="terminal-input" 
+                                value={userInput} 
+                                onChange={(e) => setUserInput(e.target.value)} 
+                                placeholder="Enter input here..."
+                            />
                         </div>
-                        <div style={{ flex: 1, borderTop: "1px solid #333", display: "flex", flexDirection: "column" }}>
-                            <div style={{ padding: "8px 12px", background: "#252526", fontSize: "0.75rem", color: "#5c5c5c", fontWeight: 'bold' }}>OUTPUT</div>
-                            <pre style={{ padding: "15px", color: "#d1d1d1", margin: 0, overflowY: "auto", fontSize: "0.85rem", flexGrow: 1 }}>{output || "No output yet..."}</pre>
+                        <div className="io-container" style={{borderTop: '1px solid var(--border)'}}>
+                            <div className="io-header">
+                                <span>STDOUT (Output)</span>
+                                <button className="btn btn-secondary" style={{fontSize: '0.7rem', padding: '2px 6px'}} onClick={() => setOutput("")}>Clear</button>
+                            </div>
+                            <pre className="terminal-output">{output || "Run code to see output..."}</pre>
                         </div>
                     </div>
                 </div>

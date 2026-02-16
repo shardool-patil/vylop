@@ -1,5 +1,6 @@
 package com.vylop.backend.controller;
 
+import com.vylop.backend.model.ChatMessage;
 import com.vylop.backend.model.CodeMessage;
 import com.vylop.backend.model.UserMessage;
 import org.slf4j.Logger;
@@ -20,47 +21,61 @@ public class EditorController {
     private static final Logger logger = LoggerFactory.getLogger(EditorController.class);
     private final SimpMessagingTemplate messagingTemplate;
     
-    // Map to track users in each room: Key = roomId, Value = Set of usernames
+    // Thread-safe map to track users in each room: Key = roomId, Value = Set of usernames
     private static final Map<String, Set<String>> roomUsers = new ConcurrentHashMap<>();
 
     public EditorController(SimpMessagingTemplate messagingTemplate) {
         this.messagingTemplate = messagingTemplate;
     }
 
+    // Static getter for the WebSocketEventListener to access the user list
+    public static Map<String, Set<String>> getRoomUsers() {
+        return roomUsers;
+    }
+
     /**
-     * Handles real-time code synchronization
+     * Handles real-time code updates.
      */
     @MessageMapping("/code/{roomId}")
     public void sendCode(@DestinationVariable String roomId, @Payload CodeMessage message) {
-        // Broadcast the code content to all subscribers of the room topic
         messagingTemplate.convertAndSend("/topic/code/" + roomId, message);
     }
 
     /**
-     * Handles a user joining a room and broadcasts the updated user list
+     * Handles real-time chat messages.
+     */
+    @MessageMapping("/chat/{roomId}")
+    public void sendChatMessage(@DestinationVariable String roomId, @Payload ChatMessage message) {
+        messagingTemplate.convertAndSend("/topic/chat/" + roomId, message);
+    }
+
+    /**
+     * Handles a user joining the room.
      */
     @MessageMapping("/room/{roomId}/join")
     public void joinRoom(@DestinationVariable String roomId, @Payload UserMessage message, SimpMessageHeaderAccessor headerAccessor) {
         String username = message.getUsername();
         
-        // Add user to the room's set
+        // Store session attributes for the Disconnect Listener
+        headerAccessor.getSessionAttributes().put("username", username);
+        headerAccessor.getSessionAttributes().put("roomId", roomId);
+
+        // Add user to the room
         roomUsers.computeIfAbsent(roomId, k -> Collections.synchronizedSet(new HashSet<>())).add(username);
         
         logger.info("User {} joined Room {}", username, roomId);
 
-        // Prepare the response with the full list of active users in the room
+        // Broadcast the updated user list to everyone
         UserMessage response = new UserMessage(
             username, 
             new ArrayList<>(roomUsers.get(roomId)), 
             "JOIN"
         );
-
-        // Broadcast to /topic/users/{roomId} so the frontend sidebar updates
         messagingTemplate.convertAndSend("/topic/users/" + roomId, response);
     }
 
     /**
-     * Handles a user explicitly leaving a room and updates the list for remaining users
+     * Handles a user explicitly leaving the room (via button click).
      */
     @MessageMapping("/room/{roomId}/leave")
     public void leaveRoom(@DestinationVariable String roomId, @Payload UserMessage message) {
@@ -70,7 +85,7 @@ public class EditorController {
             roomUsers.get(roomId).remove(username);
             logger.info("User {} left Room {}", username, roomId);
             
-            // Broadcast the updated list with the "LEAVE" type to trigger leave notifications
+            // Broadcast the updated user list so frontend removes them
             UserMessage response = new UserMessage(
                 username, 
                 new ArrayList<>(roomUsers.get(roomId)), 
