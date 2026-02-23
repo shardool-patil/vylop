@@ -1,9 +1,9 @@
 /* GLOBAL VARIABLES */
 :root {
-  --bg-dark: #0d1117;       /* GitHub Dim Dark */
-  --bg-panel: #161b22;      /* Lighter Panels */
-  --bg-input: #010409;      /* Deepest Black */
-  --accent: #2ea043;        /* Professional Green */
+  --bg-dark: #0d1117;       
+  --bg-panel: #161b22;      
+  --bg-input: #010409;      
+  --accent: #2ea043;        
   --accent-hover: #3fb950;
   --text-main: #c9d1d9;
   --text-dim: #8b949e;
@@ -26,7 +26,7 @@
     font-family: 'JetBrains Mono', 'Fira Code', monospace;
     font-weight: 700;
     font-size: 1.5rem;
-    color: #c9d1d9; /* Terminal White */
+    color: #c9d1d9; 
     display: flex;
     align-items: center;
     gap: 8px;
@@ -34,15 +34,15 @@
 }
 
 .brand-prompt {
-    color: #2ea043; /* Hacker Green */
+    color: #2ea043; 
     font-weight: 800;
-    text-shadow: 0 0 8px rgba(46, 160, 67, 0.5); /* Neon Glow */
+    text-shadow: 0 0 8px rgba(46, 160, 67, 0.5); 
 }
 
 .brand-cursor {
     display: inline-block;
     width: 10px;
-    height: 4px; /* Underscore style */
+    height: 4px; 
     background-color: #2ea043;
     animation: blink 1s step-end infinite;
     margin-left: 2px;
@@ -68,6 +68,7 @@
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   flex-shrink: 0;
   z-index: 50;
+  height: 100vh;
 }
 
 .sidebar.closed {
@@ -233,6 +234,7 @@
   flex-direction: column;
   min-width: 0;
   position: relative;
+  height: 100vh;
 }
 
 .toolbar {
@@ -243,6 +245,7 @@
   justify-content: space-between;
   align-items: center;
   padding: 0 20px;
+  flex-shrink: 0;
 }
 
 .toolbar-group { display: flex; align-items: center; gap: 15px; }
@@ -257,27 +260,49 @@
   cursor: pointer;
 }
 
-/* TERMINAL / I/O */
+/* SLEDGEHAMMER FIX FOR REACT-SPLIT & MONACO */
 .editor-split {
-  flex-grow: 1;
   display: flex;
+  flex: 1; 
+  width: 100%;
+  min-height: 0; 
   overflow: hidden;
 }
 
-.editor-wrapper { flex: 7; position: relative; }
+.editor-split.horizontal { flex-direction: row; }
+.editor-split.vertical { flex-direction: column; }
+
+.editor-split.horizontal > .editor-wrapper,
+.editor-split.horizontal > .io-wrapper {
+  height: 100% !important; 
+}
+
+.editor-split.vertical > .editor-wrapper,
+.editor-split.vertical > .io-wrapper {
+  width: 100% !important;
+}
+
+.editor-wrapper { 
+  position: relative;
+  min-width: 0; 
+  min-height: 0;
+  overflow: hidden;
+}
+
 .io-wrapper {
-  flex: 3;
   background: var(--bg-dark);
-  border-left: 1px solid var(--border);
   display: flex;
   flex-direction: column;
-  min-width: 250px;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .io-container {
   flex: 1;
   display: flex;
   flex-direction: column;
+  min-height: 0; 
 }
 
 .io-header {
@@ -303,18 +328,50 @@
   font-size: 0.9rem;
   resize: none;
   outline: none;
+  overflow-y: auto;
 }
 
 .terminal-output { color: #aaa; }
+
+.gutter {
+    background-color: var(--border);
+    transition: background-color 0.2s ease;
+    z-index: 10;
+}
+.gutter:hover { background-color: var(--accent); }
+.gutter.gutter-horizontal { cursor: col-resize; height: 100%; }
+.gutter.gutter-vertical { cursor: row-resize; width: 100%; }
+
+/* --- NEW: REMOTE CURSOR STYLES --- */
+.remote-cursor {
+    width: 2px !important;
+    background-color: var(--accent);
+    position: absolute;
+    z-index: 100;
+}
+
+.remote-cursor-label {
+    position: absolute;
+    top: -20px;
+    left: 0;
+    padding: 2px 6px;
+    font-size: 10px;
+    background-color: var(--accent);
+    color: white;
+    white-space: nowrap;
+    border-radius: 3px 3px 3px 0;
+    font-family: sans-serif;
+    font-weight: bold;
+    pointer-events: none;
+    z-index: 101;
+}
 
 /* RESPONSIVE */
 @media (max-width: 900px) {
   .sidebar { position: absolute; height: 100%; box-shadow: 10px 0 30px rgba(0,0,0,0.5); }
   .editor-split { flex-direction: column; }
-  .io-wrapper { border-left: none; border-top: 1px solid var(--border); height: 40%; }
 }
 
-/* SCROLLBARS */
 ::-webkit-scrollbar { width: 8px; }
 ::-webkit-scrollbar-track { background: var(--bg-dark); }
 ::-webkit-scrollbar-thumb { background: #30363d; border-radius: 4px; }
