@@ -1,20 +1,45 @@
 import React from 'react';
-import Avatar from 'react-avatar';
 
-const Client = ({ username }) => {
+const Client = ({ username, color }) => {
     return (
-        <div style={{ 
+        <div style={{
             display: 'flex', 
             alignItems: 'center', 
-            marginBottom: '10px', 
-            padding: '8px', 
+            justifyContent: 'space-between',
+            padding: '8px 12px', 
+            background: 'var(--bg-input)', 
+            border: '1px solid var(--border)',
             borderRadius: '8px', 
-            background: 'rgba(255,255,255,0.03)',
-            transition: 'background 0.2s'
-        }} className="client-item">
-            <Avatar name={username} size={32} round="8px" />
-            <span style={{ marginLeft: '12px', fontWeight: '500', fontSize: '0.9rem' }}>{username}</span>
-            <div style={{ marginLeft: 'auto', width: '8px', height: '8px', background: '#2ea043', borderRadius: '50%' }}></div>
+            marginBottom: '8px'
+        }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <div style={{
+                    width: '32px', 
+                    height: '32px', 
+                    borderRadius: '6px',
+                    backgroundColor: color || '#58a6ff', /* Falls back to blue if no color */
+                    display: 'flex', 
+                    alignItems: 'center',
+                    justifyContent: 'center', 
+                    color: '#fff', 
+                    fontWeight: 'bold',
+                    textTransform: 'uppercase', 
+                    fontSize: '0.9rem'
+                }}>
+                    {username ? username.substring(0, 1) : '?'}
+                </div>
+                <span style={{ color: 'var(--text-main)', fontSize: '0.9rem', fontWeight: '500' }}>
+                    {username}
+                </span>
+            </div>
+            {/* Online Indicator Dot */}
+            <div style={{ 
+                width: '8px', 
+                height: '8px', 
+                borderRadius: '50%', 
+                backgroundColor: '#2ea043', 
+                boxShadow: '0 0 5px rgba(46, 160, 67, 0.5)' 
+            }}></div>
         </div>
     );
 };

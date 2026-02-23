@@ -3,15 +3,13 @@ import { v4 as uuidv4 } from 'uuid';
 import toast from 'react-hot-toast';
 import { useNavigate } from 'react-router-dom';
 import './Home.css'; 
-// Ensure Home.css also imports the brand styles if they are not global, 
-// or simply add the CodeEditor.css import here if they are shared.
-// For this fix, assume CodeEditor.css is global or imported here:
 import './CodeEditor.css'; 
 
 const Home = () => {
     const navigate = useNavigate();
 
     const [roomId, setRoomId] = useState('');
+    const [roomName, setRoomName] = useState(''); // NEW: Track custom room name
     const [username, setUsername] = useState('');
 
     const createNewRoom = (e) => {
@@ -23,14 +21,15 @@ const Home = () => {
 
     const joinRoom = () => {
         if (!roomId || !username) {
-            toast.error('ROOM ID & username is required');
+            toast.error('ROOM ID & Username are required');
             return;
         }
 
-        // Redirect
+        // Redirect and pass the room name in the state
         navigate(`/room/${roomId}`, {
             state: {
                 username,
+                roomName: roomName.trim() ? roomName : "Dev Workspace", // Fallback if left blank
             },
         });
     };
@@ -63,6 +62,15 @@ const Home = () => {
                         placeholder="ROOM ID"
                         onChange={(e) => setRoomId(e.target.value)}
                         value={roomId}
+                        onKeyUp={handleInputEnter}
+                    />
+                    {/* --- NEW ROOM NAME INPUT --- */}
+                    <input
+                        type="text"
+                        className="inputBox"
+                        placeholder="ROOM NAME (e.g. React Project)"
+                        onChange={(e) => setRoomName(e.target.value)}
+                        value={roomName}
                         onKeyUp={handleInputEnter}
                     />
                     <input

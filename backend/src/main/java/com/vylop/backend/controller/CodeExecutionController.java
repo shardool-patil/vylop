@@ -15,14 +15,17 @@ public class CodeExecutionController {
     private CodeExecutionService executionService;
 
     @PostMapping
-    public String runCode(@RequestBody Map<String, String> payload) {
-        // 1. Get all three values from the Frontend
-        String language = payload.get("language");
-        String code = payload.get("code");
-        String input = payload.get("input"); // <--- This matches the 'input' from React
+    public String runCode(@RequestBody Map<String, Object> payload) {
+        String language = (String) payload.get("language");
+        String code = (String) payload.get("code");
+        String input = (String) payload.get("input");
         
-        // 2. Pass all three to the Service
-        // This fixes the "Unresolved compilation problem" error
-        return executionService.executeCode(language, code, input);
+        // --- NEW: Read the active tab and the multi-file bundle ---
+        String mainFile = (String) payload.getOrDefault("mainFile", "Main.java");
+        
+        @SuppressWarnings("unchecked")
+        Map<String, String> files = (Map<String, String>) payload.get("files");
+        
+        return executionService.executeCode(language, code, input, mainFile, files);
     }
 }

@@ -6,12 +6,14 @@ import com.vylop.backend.model.CursorMessage;
 import com.vylop.backend.model.UserMessage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.event.EventListener;
 import org.springframework.messaging.handler.annotation.DestinationVariable;
 import org.springframework.messaging.handler.annotation.MessageMapping;
 import org.springframework.messaging.handler.annotation.Payload;
 import org.springframework.messaging.simp.SimpMessageHeaderAccessor;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Controller;
+import org.springframework.web.socket.messaging.SessionDisconnectEvent;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
@@ -47,7 +49,6 @@ public class EditorController {
         messagingTemplate.convertAndSend("/topic/typing/" + roomId, payload);
     }
 
-    // --- UPDATED: Now safely using CursorMessage instead of a generic Map ---
     @MessageMapping("/cursor/{roomId}")
     public void sendCursorEvent(@DestinationVariable String roomId, @Payload CursorMessage payload) {
         messagingTemplate.convertAndSend("/topic/cursor/" + roomId, payload);
@@ -73,11 +74,27 @@ public class EditorController {
 
     @MessageMapping("/room/{roomId}/leave")
     public void leaveRoom(@DestinationVariable String roomId, @Payload UserMessage message) {
-        String username = message.getUsername();
-        
-        if (roomUsers.containsKey(roomId)) {
+        handleUserLeave(roomId, message.getUsername());
+    }
+
+    // --- NEW: Bulletproof Disconnect Listener ---
+    // This catches users who reload the page, close the tab, or lose internet connection.
+    @EventListener
+    public void handleWebSocketDisconnectListener(SessionDisconnectEvent event) {
+        SimpMessageHeaderAccessor headers = SimpMessageHeaderAccessor.wrap(event.getMessage());
+        String username = (String) headers.getSessionAttributes().get("username");
+        String roomId = (String) headers.getSessionAttributes().get("roomId");
+
+        if (username != null && roomId != null) {
+            logger.info("Socket disconnected. Removing User {} from Room {}", username, roomId);
+            handleUserLeave(roomId, username);
+        }
+    }
+
+    // Extracted logic so both explicit /leave and sudden disconnects use the exact same cleanup
+    private void handleUserLeave(String roomId, String username) {
+        if (roomUsers.containsKey(roomId) && roomUsers.get(roomId).contains(username)) {
             roomUsers.get(roomId).remove(username);
-            logger.info("User {} left Room {}", username, roomId);
             
             UserMessage response = new UserMessage(
                 username, 

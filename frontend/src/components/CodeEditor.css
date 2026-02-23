@@ -174,41 +174,42 @@
   background: var(--bg-input);
   border: 1px solid var(--border);
   color: var(--text-main);
-  padding: 10px 14px;
+  padding: 0 14px;
+  height: 36px;
   border-radius: 6px;
   outline: none;
   font-size: 0.9rem;
+  box-sizing: border-box;
   transition: border-color 0.2s;
 }
 
 .modern-input:focus { border-color: var(--accent); }
 
-/* BUTTONS */
+/* UNIFIED BUTTON SIZING & ALIGNMENT */
 .btn {
+  height: 36px;
+  padding: 0 16px;
   border: none;
   border-radius: 6px;
   cursor: pointer;
   font-weight: 600;
+  font-size: 0.85rem;
   transition: all 0.2s;
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: 6px; 
+  box-sizing: border-box;
 }
 
 .btn-icon {
-  background: var(--accent);
-  color: white;
   width: 36px;
-  height: 36px;
-  font-size: 1.2rem;
+  padding: 0;
 }
-
-.btn-icon:hover { background: var(--accent-hover); transform: translateY(-1px); }
 
 .btn-primary {
   background: var(--accent);
   color: #fff;
-  padding: 6px 16px;
 }
 .btn-primary:hover { background: var(--accent-hover); }
 
@@ -216,7 +217,6 @@
   background: var(--bg-panel);
   border: 1px solid var(--border);
   color: var(--text-main);
-  padding: 6px 12px;
 }
 .btn-secondary:hover { background: #21262d; border-color: var(--text-dim); }
 
@@ -238,33 +238,48 @@
 }
 
 .toolbar {
-  height: 60px;
+  min-height: 60px;
+  height: auto;
   background: var(--bg-panel);
   border-bottom: 1px solid var(--border);
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 0 20px;
+  padding: 10px 20px;
   flex-shrink: 0;
+  flex-wrap: wrap; 
+  gap: 10px;
 }
 
-.toolbar-group { display: flex; align-items: center; gap: 15px; }
+.toolbar-group { 
+  display: flex; 
+  align-items: center; 
+  gap: 10px; 
+  flex-wrap: wrap; 
+}
 
+.right-controls { justify-content: flex-end; }
+
+/* UNIFIED SELECT SIZING */
 .lang-select {
+  height: 36px;
   background: var(--bg-input);
   color: var(--text-main);
   border: 1px solid var(--border);
-  padding: 6px 10px;
+  padding: 0 12px;
   border-radius: 6px;
   outline: none;
   cursor: pointer;
+  font-size: 0.85rem;
+  box-sizing: border-box;
 }
 
-/* SLEDGEHAMMER FIX FOR REACT-SPLIT & MONACO */
+/* EDITOR SPLIT */
 .editor-split {
   display: flex;
   flex: 1; 
   width: 100%;
+  height: 100%;
   min-height: 0; 
   overflow: hidden;
 }
@@ -287,6 +302,26 @@
   min-width: 0; 
   min-height: 0;
   overflow: hidden;
+  display: flex;
+  flex-direction: column; /* Ensure Vim bar sits at bottom cleanly */
+}
+
+/* --- NEW: VIM STATUS BAR --- */
+.vim-status-bar {
+  background-color: var(--bg-input);
+  color: var(--text-main);
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 0.85rem;
+  font-weight: 600;
+  padding: 0 15px;
+  display: flex;
+  align-items: center;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+/* It automatically hides itself when no Vim text is typed inside it */
+.vim-status-bar:empty {
+  display: none;
 }
 
 .io-wrapper {
@@ -342,10 +377,9 @@
 .gutter.gutter-horizontal { cursor: col-resize; height: 100%; }
 .gutter.gutter-vertical { cursor: row-resize; width: 100%; }
 
-/* --- NEW: REMOTE CURSOR STYLES --- */
+/* REMOTE CURSOR STYLES */
 .remote-cursor {
     width: 2px !important;
-    background-color: var(--accent);
     position: absolute;
     z-index: 100;
 }
@@ -356,7 +390,6 @@
     left: 0;
     padding: 2px 6px;
     font-size: 10px;
-    background-color: var(--accent);
     color: white;
     white-space: nowrap;
     border-radius: 3px 3px 3px 0;
@@ -365,6 +398,10 @@
     pointer-events: none;
     z-index: 101;
 }
+
+/* ANIMATIONS */
+@keyframes spin { 100% { transform: rotate(360deg); } }
+.spinner { animation: spin 1s linear infinite; }
 
 /* RESPONSIVE */
 @media (max-width: 900px) {
@@ -376,3 +413,60 @@
 ::-webkit-scrollbar-track { background: var(--bg-dark); }
 ::-webkit-scrollbar-thumb { background: #30363d; border-radius: 4px; }
 ::-webkit-scrollbar-thumb:hover { background: #484f58; }
+
+/* --- NEW: FILE TABS BAR STYLES --- */
+.file-tabs {
+    display: flex;
+    background-color: var(--bg-dark);
+    border-bottom: 1px solid var(--border);
+    overflow-x: auto;
+    height: 40px;
+    align-items: flex-end;
+}
+
+.file-tab {
+    padding: 8px 20px;
+    background-color: var(--bg-dark);
+    color: var(--text-dim);
+    font-size: 0.85rem;
+    font-family: 'Inter', sans-serif;
+    cursor: pointer;
+    border-right: 1px solid var(--border);
+    border-top: 2px solid transparent;
+    transition: all 0.2s;
+    user-select: none;
+    white-space: nowrap;
+}
+
+.file-tab:hover {
+    background-color: var(--bg-panel);
+    color: var(--text-main);
+}
+
+.file-tab.active {
+    background-color: var(--bg-panel);
+    color: var(--text-main);
+    border-top: 2px solid var(--accent); /* Highlights active tab */
+    font-weight: 500;
+}
+
+.new-file-btn {
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    padding: 0 15px;
+    height: 100%;
+    cursor: pointer;
+    font-size: 0.85rem;
+    font-weight: bold;
+    transition: color 0.2s;
+}
+
+.new-file-btn:hover {
+    color: var(--text-main);
+}
+
+/* Hide scrollbar for tabs */
+.file-tabs::-webkit-scrollbar {
+    display: none;
+}
