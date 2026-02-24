@@ -51,6 +51,15 @@ const CodeEditor = () => {
     const [typingUsers, setTypingUsers] = useState([]);
     const [splitDirection, setSplitDirection] = useState(window.innerWidth < 900 ? 'vertical' : 'horizontal');
 
+    // Modal States
+    const [isModalOpen, setIsModalOpen] = useState(false);
+    const [newFileLang, setNewFileLang] = useState("python");
+    const [newFileName, setNewFileName] = useState("");
+
+    // --- NEW: Delete Modal States ---
+    const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+    const [fileToDelete, setFileToDelete] = useState(null);
+
     const editorRef = useRef(null);
     const monacoRef = useRef(null);
     const vimInstanceRef = useRef(null); 
@@ -82,6 +91,12 @@ const CodeEditor = () => {
     useEffect(() => {
         return () => { if (vimInstanceRef.current) vimInstanceRef.current.dispose(); };
     }, []);
+
+    useEffect(() => {
+        if (!files[activeFile] && Object.keys(files).length > 0) {
+            setActiveFile(Object.keys(files)[0]);
+        }
+    }, [files, activeFile]);
 
     const updateRemoteCursor = (user, pos, file) => {
         if (user === username) return;
@@ -208,7 +223,17 @@ const CodeEditor = () => {
 
                 client.subscribe(`/topic/code/${roomId}`, (msg) => {
                     const body = JSON.parse(msg.body);
-                    if (!isLocalChange.current) {
+                    
+                    if (body.type === "DELETE") {
+                        setFiles(prev => {
+                            const newFiles = { ...prev };
+                            delete newFiles[body.fileName];
+                            return newFiles;
+                        });
+                        if (body.sender !== username) {
+                            toast(`${body.sender} deleted ${body.fileName}`, { icon: '🗑️' });
+                        }
+                    } else if (!isLocalChange.current) {
                         setFiles(prev => ({
                             ...prev,
                             [body.fileName]: {
@@ -284,14 +309,14 @@ const CodeEditor = () => {
         if (chatContainerRef.current) chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
     }, [messages, typingUsers]);
 
-    const addNewFile = () => {
-        const rawLang = prompt("Enter language (java, python, cpp, javascript, typescript, go, rust):", "python");
-        if (!rawLang) return;
-        
-        const lang = rawLang.toLowerCase().trim();
-        const name = prompt("Enter file name:", `NewFile.${getExtension(lang)}`);
-        if (!name) return;
+    const handleCreateNewFile = () => {
+        if (!newFileName.trim()) {
+            toast.error("File name cannot be empty");
+            return;
+        }
 
+        const name = newFileName.trim();
+        const lang = newFileLang;
         const initialCode = CODE_SNIPPETS[lang] || `// Welcome to Vylop!\n// Start coding in ${name}...`;
 
         const newFile = {
@@ -308,6 +333,41 @@ const CodeEditor = () => {
                 sender: username, content: initialCode, language: lang, type: "CODE", fileName: name 
             }));
         }
+
+        setIsModalOpen(false);
+        setNewFileName("");
+    };
+
+    // --- CHANGED: Now opens the custom modal instead of native prompt ---
+    const handleDeleteIconClick = (e, fileName) => {
+        e.stopPropagation(); 
+        if (Object.keys(files).length === 1) {
+            toast.error("You cannot delete the last remaining file.", { icon: '⚠️' });
+            return;
+        }
+        setFileToDelete(fileName);
+        setIsDeleteModalOpen(true);
+    };
+
+    // --- NEW: Executes the actual deletion when confirmed ---
+    const confirmDeleteFile = () => {
+        if (!fileToDelete) return;
+
+        setFiles(prev => {
+            const newFiles = { ...prev };
+            delete newFiles[fileToDelete];
+            return newFiles;
+        });
+        
+        if (stompClient.current?.connected) {
+            stompClient.current.send(`/app/code/${roomId}`, {}, JSON.stringify({ 
+                sender: username, type: "DELETE", fileName: fileToDelete 
+            }));
+        }
+        toast.success(`${fileToDelete} deleted`);
+        
+        setIsDeleteModalOpen(false);
+        setFileToDelete(null);
     };
 
     const handleLanguageSelect = (e) => {
@@ -376,12 +436,10 @@ const CodeEditor = () => {
         }
     };
 
-    // --- NEW: Execute Multi-File Payload ---
     const runCode = async () => {
         setIsRunning(true);
         setOutput("Running..."); 
         try {
-            // Bundle all tabs into a map so the backend compiler can access everything
             const fileData = {};
             Object.keys(files).forEach(key => {
                 fileData[key] = files[key].value;
@@ -417,6 +475,70 @@ const CodeEditor = () => {
         <div className="app-container">
             <Toaster position="top-center" toastOptions={{ style: { background: '#333', color: '#fff' } }}/>
             
+            {/* Create File Modal */}
+            {isModalOpen && (
+                <div className="modal-overlay">
+                    <div className="custom-modal">
+                        <h3>Create New File</h3>
+                        <div className="modal-field">
+                            <label>Language</label>
+                            <select 
+                                className="modal-input modern-input" 
+                                value={newFileLang} 
+                                onChange={(e) => {
+                                    setNewFileLang(e.target.value);
+                                    if (!newFileName || newFileName.includes('.')) {
+                                        setNewFileName(`NewFile.${getExtension(e.target.value)}`);
+                                    }
+                                }}
+                            >
+                                <option value="java">Java</option>
+                                <option value="python">Python</option>
+                                <option value="cpp">C++</option>
+                                <option value="javascript">JavaScript</option>
+                                <option value="typescript">TypeScript</option>
+                                <option value="go">Go</option>
+                                <option value="rust">Rust</option>
+                            </select>
+                        </div>
+                        <div className="modal-field">
+                            <label>File Name</label>
+                            <input 
+                                type="text" 
+                                className="modal-input modern-input"
+                                value={newFileName} 
+                                onChange={(e) => setNewFileName(e.target.value)} 
+                                placeholder={`e.g. script.${getExtension(newFileLang)}`}
+                                onKeyDown={(e) => e.key === 'Enter' && handleCreateNewFile()}
+                                autoFocus
+                            />
+                        </div>
+                        <div className="modal-actions">
+                            <button className="btn btn-secondary" onClick={() => setIsModalOpen(false)}>Cancel</button>
+                            <button className="btn btn-primary" onClick={handleCreateNewFile}>Create File</button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* --- NEW: Delete File Confirmation Modal --- */}
+            {isDeleteModalOpen && (
+                <div className="modal-overlay">
+                    <div className="custom-modal">
+                        <h3>Delete File</h3>
+                        <p style={{color: 'var(--text-muted)', fontSize: '0.9rem', margin: '5px 0 15px 0', lineHeight: '1.4'}}>
+                            Are you sure you want to delete <strong>{fileToDelete}</strong>? <br/><br/>
+                            This action cannot be undone and will delete the file for everyone currently in the room.
+                        </p>
+                        <div className="modal-actions">
+                            <button className="btn btn-secondary" onClick={() => setIsDeleteModalOpen(false)}>Cancel</button>
+                            {/* Uses the btn-danger class you already have for your leave button */}
+                            <button className="btn btn-danger" onClick={confirmDeleteFile}>Delete</button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             <div className={`sidebar ${isSidebarOpen ? 'open' : 'closed'}`}>
                 <div className="sidebar-header">
                     <div className="brand-logo">
@@ -494,10 +616,19 @@ const CodeEditor = () => {
                 <div className="file-tabs">
                     {Object.keys(files).map((fileName) => (
                         <div key={fileName} className={`file-tab ${activeFile === fileName ? 'active' : ''}`} onClick={() => setActiveFile(fileName)}>
-                            {fileName}
+                            <span className="file-tab-name">{fileName}</span>
+                            {Object.keys(files).length > 1 && (
+                                <span 
+                                    className="file-tab-close" 
+                                    onClick={(e) => handleDeleteIconClick(e, fileName)}
+                                    title="Delete File"
+                                >
+                                    &times;
+                                </span>
+                            )}
                         </div>
                     ))}
-                    <button className="new-file-btn" onClick={addNewFile}>+ New File</button>
+                    <button className="new-file-btn" onClick={() => setIsModalOpen(true)}>+ New File</button>
                 </div>
 
                 <Split className={`editor-split ${splitDirection}`} sizes={[70, 30]} minSize={250} gutterSize={8} direction={splitDirection}>

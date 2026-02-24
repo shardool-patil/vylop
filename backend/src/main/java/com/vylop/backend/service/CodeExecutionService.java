@@ -1,6 +1,7 @@
 package com.vylop.backend.service;
 
 import org.springframework.stereotype.Service;
+
 import java.io.*;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -14,32 +15,86 @@ import java.util.stream.Collectors;
 public class CodeExecutionService {
 
     public String executeCode(String language, String code, String input, String mainFileName, Map<String, String> files) {
+        Path tempDir = null;
         try {
+            // 1. Create temporary directory and write all files
+            tempDir = Files.createTempDirectory("vylop_sandbox_");
+            writeFiles(tempDir, files);
+
+            // 2. Determine the Docker Image and the Shell Command to run inside it
+            String dockerImage;
+            String shellCommand;
+
             switch (language.toLowerCase()) {
                 case "java":
-                    return executeJava(input, mainFileName, files);
+                    dockerImage = "eclipse-temurin:17-alpine";
+                    String className = mainFileName.replace(".java", "");
+                    shellCommand = "javac *.java && java " + className;
+                    break;
                 case "python":
-                    return executePython(input, mainFileName, files);
+                    dockerImage = "python:3.10-alpine";
+                    shellCommand = "python " + mainFileName;
+                    break;
                 case "cpp":
                 case "c++":
-                    return executeCpp(input, mainFileName, files);
+                    dockerImage = "gcc:latest";
+                    shellCommand = "g++ *.cpp -o main && ./main";
+                    break;
                 case "javascript":
-                    return executeJavascript(input, mainFileName, files);
+                    dockerImage = "node:18-alpine";
+                    shellCommand = "node " + mainFileName;
+                    break;
                 case "typescript":
-                    return executeTypescript(input, mainFileName, files);
+                    dockerImage = "denoland/deno:alpine"; 
+                    shellCommand = "deno run " + mainFileName;
+                    break;
                 case "go":
-                    return executeGo(input, mainFileName, files);
+                    dockerImage = "golang:alpine";
+                    // FIX: Stop using 'go run'. Force it to compile directly to our folder like C++ does.
+                    shellCommand = "export GO111MODULE=off && export CGO_ENABLED=0 && go build -o main " + mainFileName + " && ./main";
+                    break;
                 case "rust":
-                    return executeRust(input, mainFileName, files);
+                    dockerImage = "rust:alpine";
+                    shellCommand = "rustc " + mainFileName + " -o main && ./main";
+                    break;
                 default:
                     return "Error: Language '" + language + "' is not supported yet.";
             }
+
+            // 3. Build the highly restricted Docker Command
+            List<String> command = new ArrayList<>();
+            command.add("docker");
+            command.add("run");
+            command.add("--rm");               // Destroy container after run
+            command.add("-i");                 // Keep STDIN open for inputs
+            command.add("--network");          
+            command.add("none");               // NO INTERNET ACCESS
+            command.add("--memory");
+            command.add("256m");               // Max 256MB RAM
+            command.add("-v");
+            // Map the host's temp directory to the container's /app directory
+            command.add(tempDir.toAbsolutePath().toString() + ":/app");
+            command.add("-w");
+            command.add("/app");               // Set working directory
+            command.add(dockerImage);          // The language environment
+            command.add("sh");
+            command.add("-c");
+            command.add(shellCommand);         // The execution command
+
+            // 4. Run the Sandbox
+            ProcessBuilder pb = new ProcessBuilder(command);
+            return runProcess(pb, input);
+
         } catch (Exception e) {
-            return "Server Error: " + e.getMessage();
+            return "Sandbox Error: " + e.getMessage();
+        } finally {
+            // 5. Always clean up the temp directory on the host machine
+            if (tempDir != null) {
+                deleteDirectory(tempDir.toFile());
+            }
         }
     }
 
-    // --- NEW: Write all files to the temporary directory ---
     private void writeFiles(Path tempDir, Map<String, String> files) throws IOException {
         if (files != null && !files.isEmpty()) {
             for (Map.Entry<String, String> entry : files.entrySet()) {
@@ -51,131 +106,10 @@ public class CodeExecutionService {
         }
     }
 
-    // --- JAVA EXECUTION ---
-    private String executeJava(String input, String mainFileName, Map<String, String> files) throws IOException, InterruptedException {
-        Path tempDir = Files.createTempDirectory("vylop_java");
-        writeFiles(tempDir, files);
-
-        // --- NEW: Compile ALL .java files found in the payload ---
-        List<String> compileCmd = new ArrayList<>();
-        compileCmd.add("javac");
-        for (String fName : files.keySet()) {
-            if (fName.endsWith(".java")) {
-                compileCmd.add(fName);
-            }
-        }
-
-        ProcessBuilder compile = new ProcessBuilder(compileCmd);
-        compile.directory(tempDir.toFile());
-        Process cProcess = compile.start();
-        
-        if (cProcess.waitFor() != 0) {
-            return "Compilation Error:\n" + readStream(cProcess.getErrorStream());
-        }
-
-        // Run (Drop the .java extension to get the pure Class name)
-        String className = mainFileName.replace(".java", "");
-        ProcessBuilder run = new ProcessBuilder("java", "-cp", tempDir.toString(), className);
-        return runProcess(run, tempDir, input); 
-    }
-
-    // --- PYTHON EXECUTION ---
-    private String executePython(String input, String mainFileName, Map<String, String> files) throws IOException, InterruptedException {
-        Path tempDir = Files.createTempDirectory("vylop_python");
-        writeFiles(tempDir, files);
-
-        ProcessBuilder run = new ProcessBuilder("python", mainFileName);
-        return runProcess(run, tempDir, input); 
-    }
-
-    // --- C++ EXECUTION ---
-    private String executeCpp(String input, String mainFileName, Map<String, String> files) throws IOException, InterruptedException {
-        Path tempDir = Files.createTempDirectory("vylop_cpp");
-        writeFiles(tempDir, files);
-        
-        boolean isWindows = System.getProperty("os.name").toLowerCase().contains("win");
-        String exeName = isWindows ? "main.exe" : "main";
-        File exeFile = new File(tempDir.toFile(), exeName);
-
-        // Compile ALL .cpp files
-        List<String> compileCmd = new ArrayList<>();
-        compileCmd.add("g++");
-        for (String fName : files.keySet()) {
-            if (fName.endsWith(".cpp") || fName.endsWith(".c") || fName.endsWith(".h")) {
-                compileCmd.add(fName);
-            }
-        }
-        compileCmd.add("-o");
-        compileCmd.add(exeFile.getAbsolutePath());
-
-        ProcessBuilder compile = new ProcessBuilder(compileCmd);
-        compile.directory(tempDir.toFile());
-        Process cProcess = compile.start();
-
-        if (cProcess.waitFor() != 0) {
-            return "Compilation Error:\n" + readStream(cProcess.getErrorStream());
-        }
-
-        ProcessBuilder run = new ProcessBuilder(exeFile.getAbsolutePath());
-        return runProcess(run, tempDir, input); 
-    }
-
-    // --- JAVASCRIPT EXECUTION ---
-    private String executeJavascript(String input, String mainFileName, Map<String, String> files) throws IOException, InterruptedException {
-        Path tempDir = Files.createTempDirectory("vylop_js");
-        writeFiles(tempDir, files);
-
-        ProcessBuilder run = new ProcessBuilder("node", mainFileName);
-        return runProcess(run, tempDir, input);
-    }
-
-    // --- TYPESCRIPT EXECUTION ---
-    private String executeTypescript(String input, String mainFileName, Map<String, String> files) throws IOException, InterruptedException {
-        Path tempDir = Files.createTempDirectory("vylop_ts");
-        writeFiles(tempDir, files);
-
-        boolean isWindows = System.getProperty("os.name").toLowerCase().contains("win");
-        String npxCmd = isWindows ? "npx.cmd" : "npx";
-
-        ProcessBuilder run = new ProcessBuilder(npxCmd, "ts-node", mainFileName);
-        return runProcess(run, tempDir, input);
-    }
-
-    // --- GO EXECUTION ---
-    private String executeGo(String input, String mainFileName, Map<String, String> files) throws IOException, InterruptedException {
-        Path tempDir = Files.createTempDirectory("vylop_go");
-        writeFiles(tempDir, files);
-
-        ProcessBuilder run = new ProcessBuilder("go", "run", mainFileName);
-        return runProcess(run, tempDir, input);
-    }
-
-    // --- RUST EXECUTION ---
-    private String executeRust(String input, String mainFileName, Map<String, String> files) throws IOException, InterruptedException {
-        Path tempDir = Files.createTempDirectory("vylop_rust");
-        writeFiles(tempDir, files);
-        
-        boolean isWindows = System.getProperty("os.name").toLowerCase().contains("win");
-        String exeName = isWindows ? "main.exe" : "main";
-        File exeFile = new File(tempDir.toFile(), exeName);
-
-        ProcessBuilder compile = new ProcessBuilder("rustc", mainFileName, "-o", exeFile.getAbsolutePath());
-        compile.directory(tempDir.toFile());
-        Process cProcess = compile.start();
-
-        if (cProcess.waitFor() != 0) {
-            return "Compilation Error:\n" + readStream(cProcess.getErrorStream());
-        }
-
-        ProcessBuilder run = new ProcessBuilder(exeFile.getAbsolutePath());
-        return runProcess(run, tempDir, input);
-    }
-
-    // --- COMMON RUNNER ---
-    private String runProcess(ProcessBuilder pb, Path tempDir, String input) throws IOException, InterruptedException {
-        pb.directory(tempDir.toFile());
+    private String runProcess(ProcessBuilder pb, String input) throws IOException, InterruptedException {
         Process process = pb.start();
 
+        // Pipe user STDIN directly into the Docker container
         try (OutputStream os = process.getOutputStream();
              BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(os))) {
             
@@ -187,11 +121,12 @@ public class CodeExecutionService {
             }
         } 
 
-        if (!process.waitFor(10, TimeUnit.SECONDS)) { 
+        if (!process.waitFor(15, TimeUnit.SECONDS)) { 
             process.destroyForcibly();
-            return "Error: Execution timed out (Process exceeded 10 seconds). Check for infinite loops!";
+            return "Timeout Error: Execution exceeded 15 seconds. Check for infinite loops or Docker image pulling!";
         }
 
+        // Capture Output
         String output = readStream(process.getInputStream());
         String error = readStream(process.getErrorStream());
 
@@ -201,5 +136,16 @@ public class CodeExecutionService {
     private String readStream(InputStream stream) {
         return new BufferedReader(new InputStreamReader(stream))
                 .lines().collect(Collectors.joining("\n"));
+    }
+
+    // Helper to recursively delete the temporary code folder
+    private void deleteDirectory(File directoryToBeDeleted) {
+        File[] allContents = directoryToBeDeleted.listFiles();
+        if (allContents != null) {
+            for (File file : allContents) {
+                deleteDirectory(file);
+            }
+        }
+        directoryToBeDeleted.delete();
     }
 }
