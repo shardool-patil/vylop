@@ -25,6 +25,12 @@ const getExtension = (lang) => {
     return map[lang] || 'txt';
 };
 
+const getLanguageFromExtension = (fileName) => {
+    const ext = fileName.split('.').pop();
+    const map = { java: 'java', py: 'python', cpp: 'cpp', js: 'javascript', ts: 'typescript', go: 'go', rs: 'rust' };
+    return map[ext] || 'plaintext';
+};
+
 const CURSOR_COLORS = ['#FF007F', '#00E5FF', '#FFD700', '#00FF00', '#9D00FF', '#FF7F50', '#00BFFF', '#FF1493'];
 
 const CodeEditor = () => {
@@ -43,6 +49,8 @@ const CodeEditor = () => {
     const [output, setOutput] = useState("");
     const [userInput, setUserInput] = useState(""); 
     const [isRunning, setIsRunning] = useState(false);
+    const [isSaving, setIsSaving] = useState(false); 
+
     const [users, setUsers] = useState([]); 
     const [isSidebarOpen, setIsSidebarOpen] = useState(true);
     const [isVimMode, setIsVimMode] = useState(false);
@@ -51,12 +59,10 @@ const CodeEditor = () => {
     const [typingUsers, setTypingUsers] = useState([]);
     const [splitDirection, setSplitDirection] = useState(window.innerWidth < 900 ? 'vertical' : 'horizontal');
 
-    // Modal States
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [newFileLang, setNewFileLang] = useState("python");
     const [newFileName, setNewFileName] = useState("");
 
-    // --- NEW: Delete Modal States ---
     const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
     const [fileToDelete, setFileToDelete] = useState(null);
 
@@ -73,6 +79,9 @@ const CodeEditor = () => {
     const pendingCursors = useRef({}); 
     const userColorMap = useRef({});
     const nextColorIndex = useRef(0);
+    
+    const hasLoaded = useRef(false);
+    const disconnectTimeoutRef = useRef(null); 
 
     const getUserColor = (user) => {
         if (!userColorMap.current[user]) {
@@ -81,6 +90,58 @@ const CodeEditor = () => {
         }
         return userColorMap.current[user];
     };
+
+    useEffect(() => {
+        let isMounted = true; 
+
+        const fetchWorkspace = async () => {
+            if (hasLoaded.current) return;
+
+            try {
+                const response = await axios.get(`http://localhost:8080/api/workspace/${roomId}/load`);
+                
+                if (!isMounted) return;
+
+                const loadedFiles = response.data;
+                
+                if (loadedFiles && Object.keys(loadedFiles).length > 0) {
+                    const newFilesState = {};
+                    Object.keys(loadedFiles).forEach(fileName => {
+                        const content = loadedFiles[fileName];
+                        const lang = getLanguageFromExtension(fileName);
+                        
+                        newFilesState[fileName] = {
+                            name: fileName,
+                            language: lang,
+                            value: content
+                        };
+                    });
+                    
+                    setFiles(newFilesState);
+                    setActiveFile(Object.keys(newFilesState)[0]);
+                    
+                    toast.success("Workspace loaded from cloud", { 
+                        icon: '☁️',
+                        id: 'workspace-loaded-toast' 
+                    });
+                    
+                    hasLoaded.current = true; 
+                }
+            } catch (error) {
+                if (isMounted) {
+                    console.log("No existing workspace found or error loading from DB.", error);
+                }
+            }
+        };
+
+        if (roomId) {
+            fetchWorkspace();
+        }
+
+        return () => {
+            isMounted = false; 
+        };
+    }, [roomId]);
 
     useEffect(() => {
         const handleResize = () => setSplitDirection(window.innerWidth < 900 ? 'vertical' : 'horizontal');
@@ -201,6 +262,11 @@ const CodeEditor = () => {
     useEffect(() => {
         if (!username) { navigate('/'); return; }
 
+        if (disconnectTimeoutRef.current) {
+            clearTimeout(disconnectTimeoutRef.current);
+            disconnectTimeoutRef.current = null;
+        }
+
         let reconnectTimeout;
         const handleBeforeUnload = () => {
             if (stompClient.current?.connected) {
@@ -212,6 +278,7 @@ const CodeEditor = () => {
 
         const connectToSocket = () => {
             if (isConnected.current) return;
+            
             const socket = new SockJS('http://localhost:8080/ws');
             const client = Stomp.over(socket);
             client.debug = () => {}; 
@@ -294,14 +361,19 @@ const CodeEditor = () => {
             });
         };
         connectToSocket();
+        
         return () => {
             window.removeEventListener('beforeunload', handleBeforeUnload);
             clearTimeout(reconnectTimeout);
-            if (stompClient.current?.connected) {
-                stompClient.current.send(`/app/room/${roomId}/leave`, {}, JSON.stringify({ username, type: "LEAVE" }));
-                stompClient.current.disconnect();
-            }
-            isConnected.current = false;
+            
+            disconnectTimeoutRef.current = setTimeout(() => {
+                if (stompClient.current?.connected) {
+                    stompClient.current.send(`/app/room/${roomId}/leave`, {}, JSON.stringify({ username, type: "LEAVE" }));
+                    stompClient.current.disconnect();
+                }
+                isConnected.current = false;
+                stompClient.current = null;
+            }, 200);
         };
     }, [roomId, username, navigate]); 
 
@@ -338,7 +410,6 @@ const CodeEditor = () => {
         setNewFileName("");
     };
 
-    // --- CHANGED: Now opens the custom modal instead of native prompt ---
     const handleDeleteIconClick = (e, fileName) => {
         e.stopPropagation(); 
         if (Object.keys(files).length === 1) {
@@ -349,7 +420,6 @@ const CodeEditor = () => {
         setIsDeleteModalOpen(true);
     };
 
-    // --- NEW: Executes the actual deletion when confirmed ---
     const confirmDeleteFile = () => {
         if (!fileToDelete) return;
 
@@ -457,6 +527,24 @@ const CodeEditor = () => {
         finally { setIsRunning(false); }
     };
 
+    const saveWorkspace = async () => {
+        setIsSaving(true);
+        try {
+            const fileData = {};
+            Object.keys(files).forEach(key => {
+                fileData[key] = files[key].value;
+            });
+
+            await axios.post(`http://localhost:8080/api/workspace/${roomId}/save?username=${encodeURIComponent(username)}&roomName=${encodeURIComponent(roomName)}`, fileData);
+            
+            toast.success("Workspace saved to cloud! ☁️");
+        } catch (error) {
+            toast.error(error.response?.data || "Failed to save workspace.");
+        } finally {
+            setIsSaving(false);
+        }
+    };
+
     const downloadCode = () => {
         const file = files[activeFile];
         const blob = new Blob([file.value], { type: "text/plain" });
@@ -475,7 +563,6 @@ const CodeEditor = () => {
         <div className="app-container">
             <Toaster position="top-center" toastOptions={{ style: { background: '#333', color: '#fff' } }}/>
             
-            {/* Create File Modal */}
             {isModalOpen && (
                 <div className="modal-overlay">
                     <div className="custom-modal">
@@ -521,7 +608,6 @@ const CodeEditor = () => {
                 </div>
             )}
 
-            {/* --- NEW: Delete File Confirmation Modal --- */}
             {isDeleteModalOpen && (
                 <div className="modal-overlay">
                     <div className="custom-modal">
@@ -532,7 +618,6 @@ const CodeEditor = () => {
                         </p>
                         <div className="modal-actions">
                             <button className="btn btn-secondary" onClick={() => setIsDeleteModalOpen(false)}>Cancel</button>
-                            {/* Uses the btn-danger class you already have for your leave button */}
                             <button className="btn btn-danger" onClick={confirmDeleteFile}>Delete</button>
                         </div>
                     </div>
@@ -590,12 +675,33 @@ const CodeEditor = () => {
                         </button>
                         <span style={{fontWeight: 'bold', fontSize: '0.9rem', color: 'var(--text-main)'}}>{roomName}</span>
                     </div>
+                    
                     <div className="toolbar-group right-controls">
-                        <button className={`btn ${isVimMode ? 'btn-primary' : 'btn-secondary'}`} onClick={toggleVimMode}>
-                            {isVimMode ? <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M20 6L9 17l-5-5"/></svg> : <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M4 17l6-6-6-6M12 19h8" /></svg>}
-                            Vim {isVimMode ? 'ON' : 'OFF'}
+                        {/* Group 1: File Management */}
+                        <button className="btn btn-secondary btn-icon" onClick={() => setIsModalOpen(true)} title="New File">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="12" y1="18" x2="12" y2="12"></line><line x1="9" y1="15" x2="15" y2="15"></line></svg>
                         </button>
-                        <select className="lang-select" value={files[activeFile]?.language || "java"} onChange={handleLanguageSelect}>
+                        <button className="btn btn-secondary btn-icon" onClick={saveWorkspace} disabled={isSaving} title="Save to Cloud">
+                            {isSaving ? <svg className="spinner" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M12 2v4m0 12v4M4.93 4.93l2.83 2.83m8.48 8.48l2.83 2.83M2 12h4m12 0h4M4.93 19.07l2.83-2.83m8.48-8.48l2.83-2.83" /></svg> : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>}
+                        </button>
+                        <button className="btn btn-secondary btn-icon" onClick={downloadCode} title="Download File">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                        </button>
+
+                        <div className="toolbar-divider"></div>
+
+                        {/* Group 2: Editor Tools */}
+                        <button className="btn btn-secondary btn-icon" onClick={formatCode} title="Format Code">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="21" y1="10" x2="3" y2="10"></line><line x1="21" y1="6" x2="3" y2="6"></line><line x1="21" y1="14" x2="3" y2="14"></line><line x1="21" y1="18" x2="3" y2="18"></line></svg>
+                        </button>
+                        <button className={`btn btn-icon ${isVimMode ? 'btn-primary' : 'btn-secondary'}`} onClick={toggleVimMode} title={isVimMode ? "Disable Vim Mode" : "Enable Vim Mode"}>
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="4 17 10 11 4 5"></polyline><line x1="12" y1="19" x2="20" y2="19"></line></svg>
+                        </button>
+
+                        <div className="toolbar-divider"></div>
+
+                        {/* Group 3: Environment & Execution */}
+                        <select className="lang-select" value={files[activeFile]?.language || "java"} onChange={handleLanguageSelect} title="Select Language">
                             <option value="java">Java</option>
                             <option value="python">Python</option>
                             <option value="cpp">C++</option>
@@ -604,11 +710,8 @@ const CodeEditor = () => {
                             <option value="go">Go</option>
                             <option value="rust">Rust</option>
                         </select>
-                        <button className="btn btn-secondary" onClick={formatCode} title="Format Code">✨ Format</button>
-                        <button className="btn btn-secondary btn-icon" onClick={downloadCode} title="Download"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg></button>
-                        <button className="btn btn-primary" onClick={runCode} disabled={isRunning}>
-                            {isRunning ? <svg className="spinner" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M12 2v4m0 12v4M4.93 4.93l2.83 2.83m8.48 8.48l2.83 2.83M2 12h4m12 0h4M4.93 19.07l2.83-2.83m8.48-8.48l2.83-2.83" /></svg> : <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>}
-                            {isRunning ? "Running..." : "Run"}
+                        <button className="btn btn-primary btn-icon" onClick={runCode} disabled={isRunning} title="Run Code">
+                            {isRunning ? <svg className="spinner" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M12 2v4m0 12v4M4.93 4.93l2.83 2.83m8.48 8.48l2.83 2.83M2 12h4m12 0h4M4.93 19.07l2.83-2.83m8.48-8.48l2.83-2.83" /></svg> : <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>}
                         </button>
                     </div>
                 </div>
@@ -628,7 +731,6 @@ const CodeEditor = () => {
                             )}
                         </div>
                     ))}
-                    <button className="new-file-btn" onClick={() => setIsModalOpen(true)}>+ New File</button>
                 </div>
 
                 <Split className={`editor-split ${splitDirection}`} sizes={[70, 30]} minSize={250} gutterSize={8} direction={splitDirection}>
