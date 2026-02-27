@@ -50,8 +50,8 @@ public class CodeExecutionService {
                     break;
                 case "go":
                     dockerImage = "golang:alpine";
-                    // FIX: Stop using 'go run'. Force it to compile directly to our folder like C++ does.
-                    shellCommand = "export GO111MODULE=off && export CGO_ENABLED=0 && go build -o main " + mainFileName + " && ./main";
+                    // THE FIX: Explicitly route the build cache to /tmp and disable CGO for Alpine compatibility
+                    shellCommand = "GO111MODULE=off CGO_ENABLED=0 GOCACHE=/tmp go run " + mainFileName;
                     break;
                 case "rust":
                     dockerImage = "rust:alpine";
@@ -121,9 +121,10 @@ public class CodeExecutionService {
             }
         } 
 
-        if (!process.waitFor(15, TimeUnit.SECONDS)) { 
+        // FIX: Bumped timeout to 20 seconds to handle WSL2 overhead alongside the new Postgres DB
+        if (!process.waitFor(20, TimeUnit.SECONDS)) { 
             process.destroyForcibly();
-            return "Timeout Error: Execution exceeded 15 seconds. Check for infinite loops or Docker image pulling!";
+            return "Timeout Error: Execution exceeded 20 seconds. Check for infinite loops or Docker image pulling!";
         }
 
         // Capture Output
