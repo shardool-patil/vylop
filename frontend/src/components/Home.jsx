@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { v4 as uuidv4 } from 'uuid';
-import toast, { Toaster } from 'react-hot-toast';
+import toast from 'react-hot-toast';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import './Home.css'; 
@@ -14,10 +14,12 @@ const Home = () => {
     const [roomId, setRoomId] = useState('');
     const [roomName, setRoomName] = useState(''); 
     
-    // --- FIX 1: Initialize State directly from LocalStorage ---
-    // This prevents the "white screen" flicker on reload
+    // --- Initialize State directly from LocalStorage ---
+    // Using the key 'username' to stay synced with Auth.jsx
     const [username, setUsername] = useState(() => {
-        return localStorage.getItem('username') || '';
+        const saved = localStorage.getItem('username');
+        console.log("Home.jsx: Checking storage for user...", saved);
+        return saved || '';
     });
     
     const [recentRooms, setRecentRooms] = useState([]);
@@ -25,8 +27,9 @@ const Home = () => {
     const [workspaceToDelete, setWorkspaceToDelete] = useState(null);
 
     useEffect(() => {
-        // --- FIX 2: Check standard 'username' key ---
+        // If no username is found in state OR storage, kick to login
         if (!username) {
+            console.log("Home.jsx: No user found, redirecting to /auth");
             navigate('/auth');
         } else {
             fetchRecentRooms(username); 
@@ -40,18 +43,18 @@ const Home = () => {
             setRecentRooms(response.data);
         } catch (error) {
             console.error("Failed to fetch recent rooms:", error);
-            // Don't show error toast on first load if it's just empty
         } finally {
             setIsLoadingRooms(false);
         }
     };
 
     const handleLogout = () => {
-        // --- FIX 3: Clear the correct keys ---
         localStorage.removeItem('username');
         localStorage.removeItem('loginType');
+        // Setting state to empty string triggers the useEffect redirect
+        setUsername('');
         navigate('/auth');
-        toast('Logged out', { icon: '👋' });
+        toast('Logged out successfully', { icon: '👋' });
     };
 
     const createNewRoom = (e) => {
@@ -111,12 +114,12 @@ const Home = () => {
         return new Date(dateString).toLocaleDateString(undefined, options);
     };
 
-    // Prevent rendering if not logged in (redirect handles it, but this stops flicker)
+    // Prevent rendering the UI if not logged in to stop flickering
     if (!username) return null; 
 
     return (
         <div className="homePageWrapper">
-            <Toaster position="top-center" toastOptions={{ style: { background: '#333', color: '#fff' } }}/>
+            {/* Note: Toaster removed here to fix double-popup bug (it's in App.jsx) */}
 
             {workspaceToDelete && (
                 <div className="modal-overlay" onClick={() => setWorkspaceToDelete(null)}>
