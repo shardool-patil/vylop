@@ -12,7 +12,8 @@ import java.util.concurrent.ConcurrentHashMap;
 
 @RestController
 @RequestMapping("/api/execute")
-@CrossOrigin(origins = "http://localhost:5173") 
+// --- FIX: Add Production URL to CrossOrigin ---
+@CrossOrigin(origins = {"http://localhost:5173", "https://vylop-frontend.onrender.com"})
 public class CodeExecutionController {
 
     @Autowired

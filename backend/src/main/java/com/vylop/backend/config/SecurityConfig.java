@@ -43,7 +43,6 @@ public class SecurityConfig {
             .cors(cors -> cors.configurationSource(corsConfigurationSource()))
             .csrf(csrf -> csrf.disable())
             .authorizeHttpRequests(auth -> auth
-                // --- THE FIX: We added /api/execute to the whitelist ---
                 .requestMatchers("/api/auth/**", "/ws/**", "/api/workspace/**", "/api/execute").permitAll()
                 .anyRequest().authenticated()
             )
@@ -73,7 +72,8 @@ public class SecurityConfig {
                             finalUsername = existingUser.get().getUsername();
                         }
 
-                        response.sendRedirect("http://localhost:5173/auth?googleUsername=" + finalUsername);
+                        // --- FIX: Redirect to Production Frontend ---
+                        response.sendRedirect("https://vylop-frontend.onrender.com/auth?googleUsername=" + finalUsername);
                     }
                 })
             );
@@ -84,7 +84,8 @@ public class SecurityConfig {
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
-        configuration.setAllowedOrigins(List.of("http://localhost:5173"));
+        // --- FIX: Add Production URL to Allowed Origins ---
+        configuration.setAllowedOrigins(List.of("http://localhost:5173", "https://vylop-frontend.onrender.com"));
         configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
         configuration.setAllowedHeaders(List.of("*"));
         configuration.setAllowCredentials(true);
