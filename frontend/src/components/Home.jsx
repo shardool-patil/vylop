@@ -4,7 +4,6 @@ import toast, { Toaster } from 'react-hot-toast';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import './Home.css'; 
-import './CodeEditor.css'; 
 
 // Production Backend URL
 const API_BASE_URL = 'https://vylop.onrender.com';
@@ -14,39 +13,43 @@ const Home = () => {
 
     const [roomId, setRoomId] = useState('');
     const [roomName, setRoomName] = useState(''); 
-    const [username, setUsername] = useState('');
+    
+    // --- FIX 1: Initialize State directly from LocalStorage ---
+    // This prevents the "white screen" flicker on reload
+    const [username, setUsername] = useState(() => {
+        return localStorage.getItem('username') || '';
+    });
     
     const [recentRooms, setRecentRooms] = useState([]);
     const [isLoadingRooms, setIsLoadingRooms] = useState(true);
-
     const [workspaceToDelete, setWorkspaceToDelete] = useState(null);
 
     useEffect(() => {
-        const storedUser = localStorage.getItem('vylop_username');
-        if (!storedUser) {
+        // --- FIX 2: Check standard 'username' key ---
+        if (!username) {
             navigate('/auth');
         } else {
-            setUsername(storedUser);
-            fetchRecentRooms(storedUser); 
+            fetchRecentRooms(username); 
         }
-    }, [navigate]);
+    }, [username, navigate]);
 
     const fetchRecentRooms = async (user) => {
         setIsLoadingRooms(true);
         try {
-            // Updated to use production URL
             const response = await axios.get(`${API_BASE_URL}/api/workspace/user/${user}`);
             setRecentRooms(response.data);
         } catch (error) {
             console.error("Failed to fetch recent rooms:", error);
-            toast.error("Could not load recent workspaces.");
+            // Don't show error toast on first load if it's just empty
         } finally {
             setIsLoadingRooms(false);
         }
     };
 
     const handleLogout = () => {
-        localStorage.removeItem('vylop_username');
+        // --- FIX 3: Clear the correct keys ---
+        localStorage.removeItem('username');
+        localStorage.removeItem('loginType');
         navigate('/auth');
         toast('Logged out', { icon: '👋' });
     };
@@ -91,7 +94,6 @@ const Home = () => {
         if (!workspaceToDelete) return;
         
         try {
-            // Updated to use production URL
             await axios.delete(`${API_BASE_URL}/api/workspace/${workspaceToDelete.id}/delete?username=${username}`);
             
             toast.success(`${workspaceToDelete.name} deleted successfully!`, { icon: '🗑️' });
@@ -109,6 +111,7 @@ const Home = () => {
         return new Date(dateString).toLocaleDateString(undefined, options);
     };
 
+    // Prevent rendering if not logged in (redirect handles it, but this stops flicker)
     if (!username) return null; 
 
     return (

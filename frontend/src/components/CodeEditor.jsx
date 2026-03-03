@@ -41,8 +41,14 @@ const CodeEditor = () => {
     const location = useLocation();
     const navigate = useNavigate();
     
-    const username = location.state?.username;
-    const roomName = location.state?.roomName || "Dev Workspace"; 
+    // --- FIX: Retrieve Username from LocalStorage on Reload ---
+    const [username] = useState(() => {
+        return location.state?.username || localStorage.getItem('username') || '';
+    });
+
+    const [roomName] = useState(() => {
+        return location.state?.roomName || "Dev Workspace";
+    });
 
     const [files, setFiles] = useState({
         "Main.java": { name: "Main.java", language: "java", value: CODE_SNIPPETS["java"] }
@@ -94,6 +100,14 @@ const CodeEditor = () => {
         return userColorMap.current[user];
     };
 
+    // --- FIX: Redirect if username is missing even after checking localStorage ---
+    useEffect(() => {
+        if (!username) {
+            toast.error("Please login first");
+            navigate('/auth');
+        }
+    }, [username, navigate]);
+
     useEffect(() => {
         let isMounted = true; 
 
@@ -138,14 +152,14 @@ const CodeEditor = () => {
             }
         };
 
-        if (roomId) {
+        if (roomId && username) {
             fetchWorkspace();
         }
 
         return () => {
             isMounted = false; 
         };
-    }, [roomId]);
+    }, [roomId, username]);
 
     useEffect(() => {
         const handleResize = () => setSplitDirection(window.innerWidth < 900 ? 'vertical' : 'horizontal');
@@ -264,7 +278,7 @@ const CodeEditor = () => {
     };
 
     useEffect(() => {
-        if (!username) { navigate('/'); return; }
+        if (!username) return; // Prevent connection if no user
 
         if (disconnectTimeoutRef.current) {
             clearTimeout(disconnectTimeoutRef.current);
