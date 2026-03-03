@@ -6,6 +6,9 @@ import axios from 'axios';
 import './Home.css'; 
 import './CodeEditor.css'; 
 
+// Production Backend URL
+const API_BASE_URL = 'https://vylop.onrender.com';
+
 const Home = () => {
     const navigate = useNavigate();
 
@@ -31,7 +34,8 @@ const Home = () => {
     const fetchRecentRooms = async (user) => {
         setIsLoadingRooms(true);
         try {
-            const response = await axios.get(`http://localhost:8080/api/workspace/user/${user}`);
+            // Updated to use production URL
+            const response = await axios.get(`${API_BASE_URL}/api/workspace/user/${user}`);
             setRecentRooms(response.data);
         } catch (error) {
             console.error("Failed to fetch recent rooms:", error);
@@ -87,7 +91,8 @@ const Home = () => {
         if (!workspaceToDelete) return;
         
         try {
-            await axios.delete(`http://localhost:8080/api/workspace/${workspaceToDelete.id}/delete?username=${username}`);
+            // Updated to use production URL
+            await axios.delete(`${API_BASE_URL}/api/workspace/${workspaceToDelete.id}/delete?username=${username}`);
             
             toast.success(`${workspaceToDelete.name} deleted successfully!`, { icon: '🗑️' });
             setRecentRooms(prev => prev.filter(r => r.id !== workspaceToDelete.id));
@@ -126,7 +131,6 @@ const Home = () => {
                 </div>
             )}
 
-            {/* --- NEW: Sleek User Profile Pill --- */}
             <div className="header-nav">
                 <div className="user-profile-pill">
                     <div className="user-avatar">

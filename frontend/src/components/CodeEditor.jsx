@@ -10,6 +10,9 @@ import { initVimMode } from 'monaco-vim';
 import Client from './Client';
 import './CodeEditor.css'; 
 
+// Production Backend URL
+const API_BASE_URL = 'https://vylop.onrender.com';
+
 const CODE_SNIPPETS = {
     java: `// Welcome to Vylop!\n\npublic class Main {\n    public static void main(String[] args) {\n        System.out.println("Hello, World!");\n    }\n}`,
     python: `# Welcome to Vylop!\n\ndef main():\n    print("Hello, World!")\n\nif __name__ == "__main__":\n    main()`,
@@ -98,7 +101,8 @@ const CodeEditor = () => {
             if (hasLoaded.current) return;
 
             try {
-                const response = await axios.get(`http://localhost:8080/api/workspace/${roomId}/load`);
+                // Updated to use production URL
+                const response = await axios.get(`${API_BASE_URL}/api/workspace/${roomId}/load`);
                 
                 if (!isMounted) return;
 
@@ -279,7 +283,8 @@ const CodeEditor = () => {
         const connectToSocket = () => {
             if (isConnected.current) return;
             
-            const socket = new SockJS('http://localhost:8080/ws');
+            // Updated to use production URL with secure protocol
+            const socket = new SockJS(`${API_BASE_URL}/ws`);
             const client = Stomp.over(socket);
             client.debug = () => {}; 
             
@@ -515,7 +520,8 @@ const CodeEditor = () => {
                 fileData[key] = files[key].value;
             });
 
-            const response = await axios.post('http://localhost:8080/api/execute', { 
+            // Updated to use production URL
+            const response = await axios.post(`${API_BASE_URL}/api/execute`, { 
                 language: files[activeFile].language, 
                 code: files[activeFile].value, 
                 input: userInput,
@@ -535,7 +541,8 @@ const CodeEditor = () => {
                 fileData[key] = files[key].value;
             });
 
-            await axios.post(`http://localhost:8080/api/workspace/${roomId}/save?username=${encodeURIComponent(username)}&roomName=${encodeURIComponent(roomName)}`, fileData);
+            // Updated to use production URL
+            await axios.post(`${API_BASE_URL}/api/workspace/${roomId}/save?username=${encodeURIComponent(username)}&roomName=${encodeURIComponent(roomName)}`, fileData);
             
             toast.success("Workspace saved to cloud! ☁️");
         } catch (error) {

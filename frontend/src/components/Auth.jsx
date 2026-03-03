@@ -4,6 +4,9 @@ import axios from 'axios';
 import toast, { Toaster } from 'react-hot-toast';
 import './Auth.css';
 
+// Production Backend URL
+const API_BASE_URL = 'https://vylop.onrender.com';
+
 const Auth = () => {
     const [isLogin, setIsLogin] = useState(true);
     const [username, setUsername] = useState('');
@@ -42,7 +45,8 @@ const Auth = () => {
         const payload = isLogin ? { username, password } : { username, email, password };
 
         try {
-            const response = await axios.post(`http://localhost:8080${endpoint}`, payload);
+            // Updated to use production URL
+            const response = await axios.post(`${API_BASE_URL}${endpoint}`, payload);
             
             if (response.data.includes("successful")) {
                 localStorage.setItem('vylop_username', username);
@@ -59,7 +63,8 @@ const Auth = () => {
     };
 
     const handleGoogleLogin = () => {
-        window.location.href = 'http://localhost:8080/oauth2/authorization/google';
+        // Updated to use production URL for OAuth redirect
+        window.location.href = `${API_BASE_URL}/oauth2/authorization/google`;
     };
 
     return (
