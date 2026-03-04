@@ -1,10 +1,13 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import tailwindcss from '@tailwindcss/vite'
 
 export default defineConfig({
-  plugins: [react()],
-  // This forces the browser to look at the root /assets/ instead of /auth/assets/
-  base: '/', 
+  plugins: [
+    react(),
+    tailwindcss(),
+  ],
+  base: '/',
   build: {
     outDir: 'dist',
   }

@@ -4,7 +4,7 @@ import Editor from "@monaco-editor/react";
 import Stomp from 'stompjs';
 import SockJS from 'sockjs-client';
 import axios from 'axios';
-import toast, { Toaster } from 'react-hot-toast';
+import toast from 'react-hot-toast';
 import Split from 'react-split';
 import { initVimMode } from 'monaco-vim';
 import Client from './Client';
@@ -12,6 +12,10 @@ import './CodeEditor.css';
 
 // Production Backend URL
 const API_BASE_URL = 'https://vylop.onrender.com';
+
+// Module-level set to track which rooms have already been loaded.
+// This survives StrictMode's double-mount unlike useRef.
+const loadedRooms = new Set();
 
 const CODE_SNIPPETS = {
     java: `// Welcome to Vylop!\n\npublic class Main {\n    public static void main(String[] args) {\n        System.out.println("Hello, World!");\n    }\n}`,
@@ -41,7 +45,6 @@ const CodeEditor = () => {
     const location = useLocation();
     const navigate = useNavigate();
     
-    // --- FIX: Retrieve Username from LocalStorage on Reload ---
     const [username] = useState(() => {
         return location.state?.username || localStorage.getItem('username') || '';
     });
@@ -88,8 +91,6 @@ const CodeEditor = () => {
     const pendingCursors = useRef({}); 
     const userColorMap = useRef({});
     const nextColorIndex = useRef(0);
-    
-    const hasLoaded = useRef(false);
     const disconnectTimeoutRef = useRef(null); 
 
     const getUserColor = (user) => {
@@ -100,7 +101,6 @@ const CodeEditor = () => {
         return userColorMap.current[user];
     };
 
-    // --- FIX: Redirect if username is missing even after checking localStorage ---
     useEffect(() => {
         if (!username) {
             toast.error("Please login first");
@@ -109,13 +109,14 @@ const CodeEditor = () => {
     }, [username, navigate]);
 
     useEffect(() => {
-        let isMounted = true; 
+        let isMounted = true;
 
         const fetchWorkspace = async () => {
-            if (hasLoaded.current) return;
+            // Module-level Set keyed by roomId survives StrictMode's double-mount
+            if (loadedRooms.has(roomId)) return;
+            loadedRooms.add(roomId);
 
             try {
-                // Updated to use production URL
                 const response = await axios.get(`${API_BASE_URL}/api/workspace/${roomId}/load`);
                 
                 if (!isMounted) return;
@@ -127,12 +128,7 @@ const CodeEditor = () => {
                     Object.keys(loadedFiles).forEach(fileName => {
                         const content = loadedFiles[fileName];
                         const lang = getLanguageFromExtension(fileName);
-                        
-                        newFilesState[fileName] = {
-                            name: fileName,
-                            language: lang,
-                            value: content
-                        };
+                        newFilesState[fileName] = { name: fileName, language: lang, value: content };
                     });
                     
                     setFiles(newFilesState);
@@ -140,13 +136,13 @@ const CodeEditor = () => {
                     
                     toast.success("Workspace loaded from cloud", { 
                         icon: '☁️',
-                        id: 'workspace-loaded-toast' 
+                        id: 'workspace-loaded-toast'
                     });
-                    
-                    hasLoaded.current = true; 
                 }
             } catch (error) {
                 if (isMounted) {
+                    // Remove from set on error so retry is possible on re-navigation
+                    loadedRooms.delete(roomId);
                     console.log("No existing workspace found or error loading from DB.", error);
                 }
             }
@@ -157,7 +153,7 @@ const CodeEditor = () => {
         }
 
         return () => {
-            isMounted = false; 
+            isMounted = false;
         };
     }, [roomId, username]);
 
@@ -278,7 +274,7 @@ const CodeEditor = () => {
     };
 
     useEffect(() => {
-        if (!username) return; // Prevent connection if no user
+        if (!username) return;
 
         if (disconnectTimeoutRef.current) {
             clearTimeout(disconnectTimeoutRef.current);
@@ -297,7 +293,6 @@ const CodeEditor = () => {
         const connectToSocket = () => {
             if (isConnected.current) return;
             
-            // Updated to use production URL with secure protocol
             const socket = new SockJS(`${API_BASE_URL}/ws`);
             const client = Stomp.over(socket);
             client.debug = () => {}; 
@@ -410,11 +405,7 @@ const CodeEditor = () => {
         const lang = newFileLang;
         const initialCode = CODE_SNIPPETS[lang] || `// Welcome to Vylop!\n// Start coding in ${name}...`;
 
-        const newFile = {
-            name,
-            language: lang,
-            value: initialCode
-        };
+        const newFile = { name, language: lang, value: initialCode };
         
         setFiles(prev => ({ ...prev, [name]: newFile }));
         setActiveFile(name);
@@ -465,11 +456,7 @@ const CodeEditor = () => {
 
         setFiles(prev => ({
             ...prev,
-            [activeFile]: {
-                ...prev[activeFile],
-                language: newLang,
-                value: newCode
-            }
+            [activeFile]: { ...prev[activeFile], language: newLang, value: newCode }
         }));
 
         if (stompClient.current?.connected) {
@@ -530,11 +517,8 @@ const CodeEditor = () => {
         setOutput("Running..."); 
         try {
             const fileData = {};
-            Object.keys(files).forEach(key => {
-                fileData[key] = files[key].value;
-            });
+            Object.keys(files).forEach(key => { fileData[key] = files[key].value; });
 
-            // Updated to use production URL
             const response = await axios.post(`${API_BASE_URL}/api/execute`, { 
                 language: files[activeFile].language, 
                 code: files[activeFile].value, 
@@ -551,11 +535,8 @@ const CodeEditor = () => {
         setIsSaving(true);
         try {
             const fileData = {};
-            Object.keys(files).forEach(key => {
-                fileData[key] = files[key].value;
-            });
+            Object.keys(files).forEach(key => { fileData[key] = files[key].value; });
 
-            // Updated to use production URL
             await axios.post(`${API_BASE_URL}/api/workspace/${roomId}/save?username=${encodeURIComponent(username)}&roomName=${encodeURIComponent(roomName)}`, fileData);
             
             toast.success("Workspace saved to cloud! ☁️");
@@ -582,7 +563,7 @@ const CodeEditor = () => {
 
     return (
         <div className="app-container">
-            <Toaster position="top-center" toastOptions={{ style: { background: '#333', color: '#fff' } }}/>
+            {/* Toaster removed — handled globally in App.jsx */}
             
             {isModalOpen && (
                 <div className="modal-overlay">
@@ -698,7 +679,6 @@ const CodeEditor = () => {
                     </div>
                     
                     <div className="toolbar-group right-controls">
-                        {/* Group 1: File Management */}
                         <button className="btn btn-secondary btn-icon" onClick={() => setIsModalOpen(true)} title="New File">
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="12" y1="18" x2="12" y2="12"></line><line x1="9" y1="15" x2="15" y2="15"></line></svg>
                         </button>
@@ -711,7 +691,6 @@ const CodeEditor = () => {
 
                         <div className="toolbar-divider"></div>
 
-                        {/* Group 2: Editor Tools */}
                         <button className="btn btn-secondary btn-icon" onClick={formatCode} title="Format Code">
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="21" y1="10" x2="3" y2="10"></line><line x1="21" y1="6" x2="3" y2="6"></line><line x1="21" y1="14" x2="3" y2="14"></line><line x1="21" y1="18" x2="3" y2="18"></line></svg>
                         </button>
@@ -721,7 +700,6 @@ const CodeEditor = () => {
 
                         <div className="toolbar-divider"></div>
 
-                        {/* Group 3: Environment & Execution */}
                         <select className="lang-select" value={files[activeFile]?.language || "java"} onChange={handleLanguageSelect} title="Select Language">
                             <option value="java">Java</option>
                             <option value="python">Python</option>

@@ -19,34 +19,35 @@ const ProtectedRoute = ({ children }) => {
 
 function App() {
   return (
-    <Router>
+    <>
       <Toaster position="top-right" />
+      <Router>
+        <Routes>
+          {/* Protected Home Route */}
+          <Route 
+            path="/" 
+            element={
+              <ProtectedRoute>
+                <Home />
+              </ProtectedRoute>
+            } 
+          />
 
-      <Routes>
-        {/* Protected Home Route */}
-        <Route 
-          path="/" 
-          element={
-            <ProtectedRoute>
-              <Home />
-            </ProtectedRoute>
-          } 
-        />
+          {/* Auth Route */}
+          <Route path="/auth" element={<Auth />} />
 
-        {/* Auth Route */}
-        <Route path="/auth" element={<Auth />} />
-
-        {/* Protected Code Editor Route */}
-        <Route 
-          path="/room/:roomId" 
-          element={
-            <ProtectedRoute>
-              <CodeEditor />
-            </ProtectedRoute>
-          } 
-        />
-      </Routes>
-    </Router>
+          {/* Protected Code Editor Route */}
+          <Route 
+            path="/room/:roomId" 
+            element={
+              <ProtectedRoute>
+                <CodeEditor />
+              </ProtectedRoute>
+            } 
+          />
+        </Routes>
+      </Router>
+    </>
   );
 }
 
