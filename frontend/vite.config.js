@@ -1,11 +1,10 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
-// https://vitejs.dev/config/
+// Standard default config
 export default defineConfig({
   plugins: [react()],
-  // CRITICAL FIX: Use '/' so assets load correctly from any sub-path like /auth
-  base: '/', 
+  // No 'base' property needed for root deployments on Render
   build: {
     outDir: 'dist',
   }

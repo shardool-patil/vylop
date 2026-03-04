@@ -1,26 +1,50 @@
 import React from 'react';
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import Home from './components/Home';
 import CodeEditor from './components/CodeEditor';
 import Auth from './components/Auth';
-import { Toaster } from 'react-hot-toast'; // Added Toaster for notifications
+import { Toaster } from 'react-hot-toast';
 import './App.css';
+
+// 🔐 Protected Route Component
+const ProtectedRoute = ({ children }) => {
+  const username = localStorage.getItem("username");
+
+  if (!username) {
+    return <Navigate to="/auth" replace />;
+  }
+
+  return children;
+};
 
 function App() {
   return (
     <Router>
-      {/* Toast Notification Provider */}
       <Toaster position="top-right" />
-      
+
       <Routes>
-        {/* Dashboard / Home Route */}
-        <Route path="/" element={<Home />} />
-        
-        {/* Auth Route - Handles Login, Register, AND Google Redirects */}
+        {/* Protected Home Route */}
+        <Route 
+          path="/" 
+          element={
+            <ProtectedRoute>
+              <Home />
+            </ProtectedRoute>
+          } 
+        />
+
+        {/* Auth Route */}
         <Route path="/auth" element={<Auth />} />
-        
-        {/* Code Editor Room Route */}
-        <Route path="/room/:roomId" element={<CodeEditor />} />
+
+        {/* Protected Code Editor Route */}
+        <Route 
+          path="/room/:roomId" 
+          element={
+            <ProtectedRoute>
+              <CodeEditor />
+            </ProtectedRoute>
+          } 
+        />
       </Routes>
     </Router>
   );
