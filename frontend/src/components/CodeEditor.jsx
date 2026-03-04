@@ -13,8 +13,8 @@ import './CodeEditor.css';
 // Production Backend URL
 const API_BASE_URL = 'https://vylop.onrender.com';
 
-// Module-level set to track which rooms have already been loaded.
-// This survives StrictMode's double-mount unlike useRef.
+// Module-level set — prevents double-fetch on StrictMode first mount,
+// but gets cleared on unmount so re-entering the room works correctly.
 const loadedRooms = new Set();
 
 const CODE_SNIPPETS = {
@@ -112,7 +112,6 @@ const CodeEditor = () => {
         let isMounted = true;
 
         const fetchWorkspace = async () => {
-            // Module-level Set keyed by roomId survives StrictMode's double-mount
             if (loadedRooms.has(roomId)) return;
             loadedRooms.add(roomId);
 
@@ -141,7 +140,6 @@ const CodeEditor = () => {
                 }
             } catch (error) {
                 if (isMounted) {
-                    // Remove from set on error so retry is possible on re-navigation
                     loadedRooms.delete(roomId);
                     console.log("No existing workspace found or error loading from DB.", error);
                 }
@@ -154,6 +152,8 @@ const CodeEditor = () => {
 
         return () => {
             isMounted = false;
+            // Clear on unmount so re-entering the room fetches fresh data
+            loadedRooms.delete(roomId);
         };
     }, [roomId, username]);
 

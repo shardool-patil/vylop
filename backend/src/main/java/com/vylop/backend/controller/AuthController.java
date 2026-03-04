@@ -6,6 +6,8 @@ import com.vylop.backend.service.AuthService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.Map;
+
 @RestController
 @RequestMapping("/api/auth")
 public class AuthController {
@@ -17,19 +19,19 @@ public class AuthController {
     }
 
     @PostMapping("/register")
-    public ResponseEntity<String> register(@RequestBody RegisterRequest request) {
-        String response = authService.registerUser(request);
-        if (response.startsWith("Error")) {
+    public ResponseEntity<Map<String, String>> register(@RequestBody RegisterRequest request) {
+        Map<String, String> response = authService.registerUser(request);
+        if (response.containsKey("error")) {
             return ResponseEntity.badRequest().body(response);
         }
         return ResponseEntity.ok(response);
     }
 
     @PostMapping("/login")
-    public ResponseEntity<String> login(@RequestBody LoginRequest request) {
-        String response = authService.loginUser(request);
-        if (response.startsWith("Error")) {
-            return ResponseEntity.status(401).body(response); // 401 Unauthorized
+    public ResponseEntity<Map<String, String>> login(@RequestBody LoginRequest request) {
+        Map<String, String> response = authService.loginUser(request);
+        if (response.containsKey("error")) {
+            return ResponseEntity.status(401).body(response);
         }
         return ResponseEntity.ok(response);
     }

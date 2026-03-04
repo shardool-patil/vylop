@@ -7,6 +7,7 @@ import com.vylop.backend.repository.UserRepository;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
+import java.util.Map;
 import java.util.Optional;
 
 @Service
@@ -20,35 +21,32 @@ public class AuthService {
         this.passwordEncoder = passwordEncoder;
     }
 
-    public String registerUser(RegisterRequest request) {
+    public Map<String, String> registerUser(RegisterRequest request) {
         if (userRepository.findByUsername(request.getUsername()).isPresent()) {
-            return "Error: Username is already taken!";
+            return Map.of("error", "Username is already taken!");
         }
         if (userRepository.findByEmail(request.getEmail()).isPresent()) {
-            return "Error: Email is already registered!";
+            return Map.of("error", "Email is already registered!");
         }
 
-        // Create the user and hash the password
         User newUser = new User();
         newUser.setUsername(request.getUsername());
         newUser.setEmail(request.getEmail());
         newUser.setPassword(passwordEncoder.encode(request.getPassword()));
 
         userRepository.save(newUser);
-        return "Success: User registered successfully!";
+        return Map.of("message", "User registered successfully!", "username", request.getUsername());
     }
 
-    public String loginUser(LoginRequest request) {
+    public Map<String, String> loginUser(LoginRequest request) {
         Optional<User> userOptional = userRepository.findByUsername(request.getUsername());
 
         if (userOptional.isPresent()) {
             User user = userOptional.get();
-            // Verify the raw password against the hashed database password
             if (passwordEncoder.matches(request.getPassword(), user.getPassword())) {
-                // In the next step, we will return a real JWT token here instead of a string
-                return "Success: Logged in successfully!";
+                return Map.of("message", "Logged in successfully!", "username", user.getUsername());
             }
         }
-        return "Error: Invalid username or password!";
+        return Map.of("error", "Invalid username or password!");
     }
 }
