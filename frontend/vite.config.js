@@ -1,18 +1,11 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
-// https://vite.dev/config/
+// https://vitejs.dev/config/
 export default defineConfig({
   plugins: [react()],
-  // --- ADDED THIS: Ensures all paths resolve to root ---
+  // CRITICAL FIX: Use '/' so assets load correctly from any sub-path like /auth
   base: '/', 
-  server: {
-    watch: {
-      usePolling: true,
-    },
-    // Optional: Help for local testing if needed
-    historyApiFallback: true, 
-  },
   build: {
     outDir: 'dist',
   }
