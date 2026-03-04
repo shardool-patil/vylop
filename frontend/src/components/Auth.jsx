@@ -53,7 +53,7 @@ const Auth = () => {
       }, 500);
     } catch (error) {
       console.error("Auth Error:", error);
-      toast.error(error.response?.data?.message || 'Authentication failed');
+      toast.error(error.response?.data?.error || 'Authentication failed');
     } finally {
       setLoading(false);
     }
