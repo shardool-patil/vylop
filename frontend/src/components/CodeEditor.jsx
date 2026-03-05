@@ -168,7 +168,7 @@ const CodeEditor = () => {
             isMounted = false;
             loadedRooms.delete(roomId);
         };
-    }, [roomId, username]);
+    }, [roomId, username, roomName]); // Added roomName to dependencies to ensure fallback works
 
     useEffect(() => {
         const handleResize = () => setSplitDirection(window.innerWidth < 900 ? 'vertical' : 'horizontal');
