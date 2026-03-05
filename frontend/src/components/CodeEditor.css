@@ -88,7 +88,7 @@
   backdrop-filter: blur(10px);
 }
 
-/* USER LIST */
+/* USER LIST & LIVE STATUS */
 .user-list {
   padding: 15px;
   height: 35%;
@@ -114,6 +114,7 @@
     height: 8px;
     border-radius: 50%;
     position: relative;
+    display: inline-block;
 }
 
 .status-dot.connected {
@@ -129,10 +130,13 @@
     background-color: inherit;
     border-radius: 50%;
     animation: pulse 2s ease-out infinite;
+    top: 0;
+    left: 0;
 }
 
 .status-dot.disconnected {
     background-color: #f85149;
+    box-shadow: 0 0 8px rgba(248, 81, 73, 0.4);
 }
 
 @keyframes pulse {
@@ -295,7 +299,6 @@
 
 .right-controls { justify-content: flex-end; }
 
-/* --- NEW: TOOLBAR DIVIDER --- */
 .toolbar-divider {
     width: 1px;
     height: 24px;
@@ -495,7 +498,7 @@
     background-color: var(--bg-panel);
     color: var(--text-main);
     border-top: 2px solid #58a6ff; 
-    border-bottom: 2px solid #58a6ff; /* New accent line */
+    border-bottom: 2px solid #58a6ff; /* Bright bottom highlight */
     font-weight: 500;
     box-shadow: inset 0 2px 10px rgba(88, 166, 255, 0.05); 
 }

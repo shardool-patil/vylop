@@ -48,8 +48,9 @@ const CodeEditor = () => {
         return location.state?.username || localStorage.getItem('username') || '';
     });
 
-    const [roomName] = useState(() => {
-        return location.state?.roomName || "Dev Workspace";
+    // UPDATED: Changed roomName to a state to handle dynamic fetching
+    const [roomName, setRoomName] = useState(() => {
+        return location.state?.roomName || "Loading Workspace...";
     });
 
     const [files, setFiles] = useState({
@@ -119,6 +120,13 @@ const CodeEditor = () => {
             loadedRooms.add(roomId);
 
             try {
+                // FETCH METADATA: Get the actual room name from the DB
+                const workspaceRes = await axios.get(`${API_BASE_URL}/api/workspace/${roomId}`);
+                if (isMounted && workspaceRes.data?.name) {
+                    setRoomName(workspaceRes.data.name);
+                }
+
+                // FETCH FILES: Load existing code
                 const response = await axios.get(`${API_BASE_URL}/api/workspace/${roomId}/load`);
                 
                 if (!isMounted) return;
@@ -144,6 +152,8 @@ const CodeEditor = () => {
             } catch (error) {
                 if (isMounted) {
                     loadedRooms.delete(roomId);
+                    // Fallback if room doesn't exist in DB yet
+                    if (roomName === "Loading Workspace...") setRoomName("Dev Workspace");
                     console.log("No existing workspace found or error loading from DB.", error);
                 }
             }
@@ -718,7 +728,7 @@ const CodeEditor = () => {
 
                         <div className="toolbar-divider"></div>
 
-                        {/* Theme Dropdown Added Here */}
+                        {/* Theme Dropdown */}
                         <select className="lang-select" value={editorTheme} onChange={handleThemeChange} title="Select Theme" style={{marginRight: '10px'}}>
                             <option value="vs-dark">Dark Theme</option>
                             <option value="light">Light Theme</option>
