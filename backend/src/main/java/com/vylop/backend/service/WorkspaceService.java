@@ -29,6 +29,25 @@ public class WorkspaceService {
         this.userRepository = userRepository;
     }
 
+    /**
+     * Retrieves metadata for a specific workspace.
+     * This is used by the frontend to sync the Room Name for all participants.
+     */
+    public Map<String, Object> getWorkspaceMetadata(UUID roomId) {
+        Optional<Room> roomOpt = roomRepository.findById(roomId);
+        Map<String, Object> metadata = new HashMap<>();
+        
+        if (roomOpt.isPresent()) {
+            Room room = roomOpt.get();
+            metadata.put("id", room.getId());
+            metadata.put("name", room.getName());
+            metadata.put("host", room.getHost().getUsername());
+            metadata.put("createdAt", room.getCreatedAt());
+        }
+        
+        return metadata;
+    }
+
     @Transactional
     public String saveWorkspace(UUID roomId, String username, String roomName, Map<String, String> files) {
         Optional<User> userOpt = userRepository.findByUsername(username);
@@ -77,7 +96,6 @@ public class WorkspaceService {
         }).collect(Collectors.toList());
     }
 
-    // --- NEW: Safe cascading delete function ---
     @Transactional
     public String deleteWorkspace(UUID roomId, String username) {
         Optional<Room> roomOpt = roomRepository.findById(roomId);
@@ -85,21 +103,21 @@ public class WorkspaceService {
         
         Room room = roomOpt.get();
         
-        // Security check: Only the owner can delete the room
         if (!room.getHost().getUsername().equals(username)) {
             return "Error: Unauthorized. Only the host can delete this workspace.";
         }
 
-        // 1. Delete all files inside the room first
         List<RoomFile> files = roomFileRepository.findByRoomId(roomId);
         roomFileRepository.deleteAll(files);
         
-        // 2. Delete the empty room
         roomRepository.delete(room);
         
         return "Workspace deleted successfully.";
     }
 
+    /**
+     * Helper to detect programming language based on file extension.
+     */
     private String determineLanguage(String fileName) {
         if (fileName.endsWith(".java")) return "java";
         if (fileName.endsWith(".py")) return "python";
