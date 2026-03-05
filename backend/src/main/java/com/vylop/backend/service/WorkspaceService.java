@@ -30,6 +30,26 @@ public class WorkspaceService {
     }
 
     /**
+     * Registers a room with just a name and host — called when the host first joins.
+     * This ensures guests can immediately sync the correct room name.
+     */
+    @Transactional
+    public String registerRoom(UUID roomId, String username, String roomName) {
+        Optional<User> userOpt = userRepository.findByUsername(username);
+        if (userOpt.isEmpty()) return "Error: User not found!";
+        User user = userOpt.get();
+
+        // Only create if it doesn't already exist — never overwrite existing room
+        if (!roomRepository.existsById(roomId)) {
+            Room newRoom = new Room(roomName, user, false);
+            newRoom.setId(roomId);
+            roomRepository.save(newRoom);
+        }
+
+        return "Room registered!";
+    }
+
+    /**
      * Retrieves metadata for a specific workspace.
      * This is used by the frontend to sync the Room Name for all participants.
      */
@@ -59,6 +79,10 @@ public class WorkspaceService {
             newRoom.setId(roomId);
             return roomRepository.save(newRoom);
         });
+
+        // Update the room name in case it changed
+        room.setName(roomName);
+        roomRepository.save(room);
 
         for (Map.Entry<String, String> entry : files.entrySet()) {
             String fileName = entry.getKey();

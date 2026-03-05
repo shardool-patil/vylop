@@ -61,12 +61,10 @@ const Home = () => {
 
         const finalRoomName = roomName.trim() ? roomName : "Dev Workspace";
 
-        // Register the room name in the DB immediately so guests can sync it
-        // This uses the existing save endpoint with an empty files map
+        // Register the room name in the DB so guests can sync it immediately
         try {
             await axios.post(
-                `${API_BASE_URL}/api/workspace/${roomId}/save?username=${encodeURIComponent(username)}&roomName=${encodeURIComponent(finalRoomName)}`,
-                {} // empty files — just registers the room name
+                `${API_BASE_URL}/api/workspace/${roomId}/register?username=${encodeURIComponent(username)}&roomName=${encodeURIComponent(finalRoomName)}`
             );
         } catch (error) {
             // Non-fatal — still navigate even if registration fails

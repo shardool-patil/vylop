@@ -18,7 +18,23 @@ public class WorkspaceController {
         this.workspaceService = workspaceService;
     }
 
-    // --- ADDED: Endpoint to get workspace metadata (like the name) ---
+    /**
+     * Called by the host when first joining a room.
+     * Registers the room name so guests can sync it immediately.
+     */
+    @PostMapping("/{roomId}/register")
+    public ResponseEntity<String> registerRoom(
+            @PathVariable UUID roomId,
+            @RequestParam String username,
+            @RequestParam String roomName) {
+
+        String response = workspaceService.registerRoom(roomId, username, roomName);
+        if (response.startsWith("Error")) {
+            return ResponseEntity.badRequest().body(response);
+        }
+        return ResponseEntity.ok(response);
+    }
+
     @GetMapping("/{roomId}")
     public ResponseEntity<Map<String, Object>> getWorkspaceMetadata(@PathVariable UUID roomId) {
         Map<String, Object> metadata = workspaceService.getWorkspaceMetadata(roomId);
