@@ -13,8 +13,7 @@ import './CodeEditor.css';
 // Production Backend URL
 const API_BASE_URL = 'https://vylop.onrender.com';
 
-// Module-level set — prevents double-fetch on StrictMode first mount,
-// but gets cleared on unmount so re-entering the room works correctly.
+// Module-level set — prevents double-fetch on StrictMode first mount
 const loadedRooms = new Set();
 
 const CODE_SNIPPETS = {
@@ -70,6 +69,9 @@ const CodeEditor = () => {
     const [chatMsg, setChatMsg] = useState("");
     const [typingUsers, setTypingUsers] = useState([]);
     const [splitDirection, setSplitDirection] = useState(window.innerWidth < 900 ? 'vertical' : 'horizontal');
+
+    // Theme state with local storage persistence
+    const [editorTheme, setEditorTheme] = useState(() => localStorage.getItem('editorTheme') || 'vs-dark');
 
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [newFileLang, setNewFileLang] = useState("python");
@@ -152,7 +154,6 @@ const CodeEditor = () => {
 
         return () => {
             isMounted = false;
-            // Clear on unmount so re-entering the room fetches fresh data
             loadedRooms.delete(roomId);
         };
     }, [roomId, username]);
@@ -271,6 +272,11 @@ const CodeEditor = () => {
             setIsVimMode(true);
             toast.success("Vim Mode Enabled");
         }
+    };
+
+    const handleThemeChange = (e) => {
+        setEditorTheme(e.target.value);
+        localStorage.setItem('editorTheme', e.target.value);
     };
 
     useEffect(() => {
@@ -561,10 +567,14 @@ const CodeEditor = () => {
         toast.success(`${file.name} Downloaded!`);
     };
 
+    const copyRoomLink = () => {
+        const link = `${window.location.origin}/room/${roomId}`;
+        navigator.clipboard.writeText(link);
+        toast.success("Invite Link Copied!", { icon: '🔗' });
+    };
+
     return (
         <div className="app-container">
-            {/* Toaster removed — handled globally in App.jsx */}
-            
             {isModalOpen && (
                 <div className="modal-overlay">
                     <div className="custom-modal">
@@ -664,7 +674,7 @@ const CodeEditor = () => {
                 </div>
 
                 <div className="sidebar-header" style={{borderTop: '1px solid var(--border)'}}>
-                    <button className="btn btn-secondary" style={{flex:1, marginRight: '10px'}} onClick={() => {navigator.clipboard.writeText(roomId); toast.success("Copied!");}}>Copy ID</button>
+                    <button className="btn btn-secondary" style={{flex:1, marginRight: '10px'}} onClick={copyRoomLink}>Copy Link</button>
                     <button className="btn btn-danger" style={{flex:1}} onClick={() => navigate('/')}>Leave</button>
                 </div>
             </div>
@@ -699,6 +709,13 @@ const CodeEditor = () => {
                         </button>
 
                         <div className="toolbar-divider"></div>
+
+                        {/* Theme Dropdown Added Here */}
+                        <select className="lang-select" value={editorTheme} onChange={handleThemeChange} title="Select Theme" style={{marginRight: '10px'}}>
+                            <option value="vs-dark">Dark Theme</option>
+                            <option value="light">Light Theme</option>
+                            <option value="hc-black">High Contrast</option>
+                        </select>
 
                         <select className="lang-select" value={files[activeFile]?.language || "java"} onChange={handleLanguageSelect} title="Select Language">
                             <option value="java">Java</option>
@@ -738,7 +755,7 @@ const CodeEditor = () => {
                             <Editor 
                                 height="100%" 
                                 language={files[activeFile]?.language === "cpp" ? "cpp" : files[activeFile]?.language} 
-                                theme="vs-dark" 
+                                theme={editorTheme} 
                                 value={files[activeFile]?.value || ""} 
                                 onMount={handleEditorDidMount} 
                                 onChange={handleEditorChange} 

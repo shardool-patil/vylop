@@ -102,6 +102,13 @@ const Home = () => {
         return new Date(dateString).toLocaleDateString(undefined, options);
     };
 
+    const copyRoomLink = (id, e) => {
+        if (e) e.stopPropagation();
+        const link = `${window.location.origin}/room/${id}`;
+        navigator.clipboard.writeText(link);
+        toast.success('Invite link copied!', { icon: '🔗' });
+    };
+
     return (
         <div className="homePageWrapper">
             {workspaceToDelete && (
@@ -156,10 +163,17 @@ const Home = () => {
                             value={roomName}
                             onKeyUp={handleInputEnter}
                         />
-                        <button className="btn joinBtn" onClick={joinRoom}>
-                            Join Room
-                        </button>
-                        <span className="createInfo">
+                        <div style={{display: 'flex', gap: '10px', marginTop: '10px'}}>
+                            <button className="btn joinBtn" style={{flex: 1}} onClick={joinRoom}>
+                                Join Room
+                            </button>
+                            {roomId && (
+                                <button className="btn btn-secondary" onClick={(e) => copyRoomLink(roomId, e)} title="Copy Shareable Link">
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>
+                                </button>
+                            )}
+                        </div>
+                        <span className="createInfo" style={{marginTop: '15px'}}>
                             If you don't have an invite then&nbsp;
                             <a onClick={createNewRoom} href="/" className="createNewBtn">
                                 new room
@@ -181,7 +195,17 @@ const Home = () => {
                         <div className="workspaces-grid">
                             {recentRooms.map((room) => (
                                 <div key={room.id} className="workspace-card" onClick={() => joinRecentRoom(room.id, room.name)}>
-                                    <h4>{room.name}</h4>
+                                    <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start'}}>
+                                        <h4>{room.name}</h4>
+                                        <button 
+                                            className="btn-icon" 
+                                            onClick={(e) => copyRoomLink(room.id, e)} 
+                                            title="Copy Invite Link" 
+                                            style={{background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: '0'}}
+                                        >
+                                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>
+                                        </button>
+                                    </div>
                                     <p>ID: {room.id.substring(0, 8)}...</p>
                                     <span>{formatDate(room.createdAt)}</span>
                                 </div>

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams, useLocation } from 'react-router-dom';
 import { Loader2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import axios from 'axios';
@@ -19,6 +19,10 @@ const Auth = () => {
 
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const location = useLocation();
+  
+  // Capture the intended destination, or default to home
+  const from = location.state?.from?.pathname || "/";
 
   useEffect(() => {
     const googleUsername = searchParams.get("googleUsername");
@@ -26,7 +30,11 @@ const Auth = () => {
       localStorage.setItem("username", googleUsername);
       localStorage.setItem("loginType", "google");
       toast.success("Successfully logged in with Google!");
-      window.location.href = "/";
+      
+      // Check if we saved a redirect URL before going to Google
+      const redirectUrl = localStorage.getItem('redirectUrl') || "/";
+      localStorage.removeItem('redirectUrl'); 
+      window.location.href = redirectUrl;
     }
   }, [searchParams]);
 
@@ -48,8 +56,10 @@ const Auth = () => {
       const res = await axios.post(`${API_BASE_URL}${endpoint}`, payload);
       localStorage.setItem('username', res.data.username);
       toast.success(isLogin ? 'Welcome back!' : 'Account created successfully!');
+      
+      // Redirect to the intended room or home
       setTimeout(() => {
-        window.location.href = "/";
+        navigate(from, { replace: true });
       }, 500);
     } catch (error) {
       console.error("Auth Error:", error);
@@ -60,6 +70,8 @@ const Auth = () => {
   };
 
   const handleGoogleLogin = () => {
+    // Save the intended destination before leaving the site for Google Auth
+    localStorage.setItem('redirectUrl', from);
     window.location.href = `${API_BASE_URL}/oauth2/authorization/google`;
   };
 
