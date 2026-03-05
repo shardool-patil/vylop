@@ -53,16 +53,30 @@ const Home = () => {
         toast.success('Generated a new Room ID');
     };
 
-    const joinRoom = () => {
+    const joinRoom = async () => {
         if (!roomId) {
             toast.error('ROOM ID is required');
             return;
         }
 
+        const finalRoomName = roomName.trim() ? roomName : "Dev Workspace";
+
+        // Register the room name in the DB immediately so guests can sync it
+        // This uses the existing save endpoint with an empty files map
+        try {
+            await axios.post(
+                `${API_BASE_URL}/api/workspace/${roomId}/save?username=${encodeURIComponent(username)}&roomName=${encodeURIComponent(finalRoomName)}`,
+                {} // empty files — just registers the room name
+            );
+        } catch (error) {
+            // Non-fatal — still navigate even if registration fails
+            console.warn("Could not pre-register room name:", error);
+        }
+
         navigate(`/room/${roomId}`, {
             state: {
                 username,
-                roomName: roomName.trim() ? roomName : "Dev Workspace",
+                roomName: finalRoomName,
             },
         });
     };
