@@ -48,7 +48,6 @@ const CodeEditor = () => {
         return location.state?.username || localStorage.getItem('username') || '';
     });
 
-    // Initialize with navigation state or a placeholder
     const [roomName, setRoomName] = useState(() => {
         return location.state?.roomName || "Syncing Workspace...";
     });
@@ -72,7 +71,6 @@ const CodeEditor = () => {
     const [splitDirection, setSplitDirection] = useState(window.innerWidth < 900 ? 'vertical' : 'horizontal');
     const [wsConnected, setWsConnected] = useState(false);
 
-    // Theme state with local storage persistence
     const [editorTheme, setEditorTheme] = useState(() => localStorage.getItem('editorTheme') || 'vs-dark');
 
     const [isModalOpen, setIsModalOpen] = useState(false);
@@ -153,7 +151,6 @@ const CodeEditor = () => {
             } catch (error) {
                 if (isMounted) {
                     loadedRooms.delete(roomId);
-                    // If metadata fetch fails (e.g. 404), fall back to a default name
                     setRoomName(prev => prev === "Syncing Workspace..." ? "Dev Workspace" : prev);
                     console.log("Sync error:", error);
                 }
@@ -168,7 +165,7 @@ const CodeEditor = () => {
             isMounted = false;
             loadedRooms.delete(roomId);
         };
-    }, [roomId, username, roomName]); // Added roomName to dependencies to ensure fallback works
+    }, [roomId, username]); // do NOT add roomName here — it causes infinite re-fetching
 
     useEffect(() => {
         const handleResize = () => setSplitDirection(window.innerWidth < 900 ? 'vertical' : 'horizontal');
@@ -773,7 +770,7 @@ const CodeEditor = () => {
                             <Editor 
                                 height="100%" 
                                 language={files[activeFile]?.language === "cpp" ? "cpp" : files[activeFile]?.language} 
-                                theme={editorTheme} 
+                                theme={editorTheme}
                                 value={files[activeFile]?.value || ""} 
                                 onMount={handleEditorDidMount} 
                                 onChange={handleEditorChange} 
