@@ -69,6 +69,7 @@ const CodeEditor = () => {
     const [chatMsg, setChatMsg] = useState("");
     const [typingUsers, setTypingUsers] = useState([]);
     const [splitDirection, setSplitDirection] = useState(window.innerWidth < 900 ? 'vertical' : 'horizontal');
+    const [wsConnected, setWsConnected] = useState(false);
 
     // Theme state with local storage persistence
     const [editorTheme, setEditorTheme] = useState(() => localStorage.getItem('editorTheme') || 'vs-dark');
@@ -277,6 +278,7 @@ const CodeEditor = () => {
     const handleThemeChange = (e) => {
         setEditorTheme(e.target.value);
         localStorage.setItem('editorTheme', e.target.value);
+        toast(`Theme set to ${e.target.value}`, { icon: '🎨' });
     };
 
     useEffect(() => {
@@ -306,6 +308,7 @@ const CodeEditor = () => {
             client.connect({}, () => {
                 stompClient.current = client;
                 isConnected.current = true;
+                setWsConnected(true);
                 clearTimeout(reconnectTimeout);
 
                 client.subscribe(`/topic/code/${roomId}`, (msg) => {
@@ -376,6 +379,7 @@ const CodeEditor = () => {
                 client.send(`/app/room/${roomId}/join`, {}, JSON.stringify({ username, type: "JOIN" }));
             }, (err) => {
                 isConnected.current = false;
+                setWsConnected(false);
                 stompClient.current = null;
                 reconnectTimeout = setTimeout(connectToSocket, 3000);
             });
@@ -392,6 +396,7 @@ const CodeEditor = () => {
                     stompClient.current.disconnect();
                 }
                 isConnected.current = false;
+                setWsConnected(false);
                 stompClient.current = null;
             }, 200);
         };
@@ -647,7 +652,10 @@ const CodeEditor = () => {
                 </div>
 
                 <div className="user-list">
-                    <div className="section-title">Online ({users.length})</div>
+                    <div className="section-title">
+                        Online ({users.length})
+                        <span className={`status-dot ${wsConnected ? 'connected' : 'disconnected'}`}></span>
+                    </div>
                     {users.map((u, i) => <Client key={i} username={u} color={getUserColor(u)} />)}
                 </div>
 
@@ -775,7 +783,9 @@ const CodeEditor = () => {
                                 <span>STDOUT (Output)</span>
                                 <button className="btn btn-secondary" style={{fontSize: '0.7rem', height: '26px', padding: '0 8px'}} onClick={() => setOutput("")}>Clear</button>
                             </div>
-                            <pre className="terminal-output">{output || "Run code to see output..."}</pre>
+                            <pre className={`terminal-output ${!output ? 'placeholder' : ''}`}>
+                                {output || "// Run code to see output..."}
+                            </pre>
                         </div>
                     </div>
                 </Split>
