@@ -48,9 +48,9 @@ const CodeEditor = () => {
         return location.state?.username || localStorage.getItem('username') || '';
     });
 
-    // UPDATED: Changed roomName to a state to handle dynamic fetching
+    // Initialize with navigation state or a placeholder
     const [roomName, setRoomName] = useState(() => {
-        return location.state?.roomName || "Loading Workspace...";
+        return location.state?.roomName || "Syncing Workspace...";
     });
 
     const [files, setFiles] = useState({
@@ -115,18 +115,19 @@ const CodeEditor = () => {
     useEffect(() => {
         let isMounted = true;
 
-        const fetchWorkspace = async () => {
+        const fetchWorkspaceData = async () => {
             if (loadedRooms.has(roomId)) return;
             loadedRooms.add(roomId);
 
             try {
-                // FETCH METADATA: Get the actual room name from the DB
-                const workspaceRes = await axios.get(`${API_BASE_URL}/api/workspace/${roomId}`);
-                if (isMounted && workspaceRes.data?.name) {
-                    setRoomName(workspaceRes.data.name);
+                // 1. FETCH METADATA: Sync the room name from the backend
+                // This ensures direct link joiners see the correct name
+                const metaRes = await axios.get(`${API_BASE_URL}/api/workspace/${roomId}`);
+                if (isMounted && metaRes.data?.name) {
+                    setRoomName(metaRes.data.name);
                 }
 
-                // FETCH FILES: Load existing code
+                // 2. FETCH FILES: Load existing code contents
                 const response = await axios.get(`${API_BASE_URL}/api/workspace/${roomId}/load`);
                 
                 if (!isMounted) return;
@@ -144,7 +145,7 @@ const CodeEditor = () => {
                     setFiles(newFilesState);
                     setActiveFile(Object.keys(newFilesState)[0]);
                     
-                    toast.success("Workspace loaded from cloud", { 
+                    toast.success("Workspace synced", { 
                         icon: '☁️',
                         id: 'workspace-loaded-toast'
                     });
@@ -152,15 +153,15 @@ const CodeEditor = () => {
             } catch (error) {
                 if (isMounted) {
                     loadedRooms.delete(roomId);
-                    // Fallback if room doesn't exist in DB yet
-                    if (roomName === "Loading Workspace...") setRoomName("Dev Workspace");
-                    console.log("No existing workspace found or error loading from DB.", error);
+                    // If metadata fetch fails (e.g. 404), fall back to a default name
+                    setRoomName(prev => prev === "Syncing Workspace..." ? "Dev Workspace" : prev);
+                    console.log("Sync error:", error);
                 }
             }
         };
 
         if (roomId && username) {
-            fetchWorkspace();
+            fetchWorkspaceData();
         }
 
         return () => {
@@ -728,7 +729,6 @@ const CodeEditor = () => {
 
                         <div className="toolbar-divider"></div>
 
-                        {/* Theme Dropdown */}
                         <select className="lang-select" value={editorTheme} onChange={handleThemeChange} title="Select Theme" style={{marginRight: '10px'}}>
                             <option value="vs-dark">Dark Theme</option>
                             <option value="light">Light Theme</option>
