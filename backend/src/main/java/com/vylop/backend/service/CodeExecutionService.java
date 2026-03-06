@@ -51,7 +51,8 @@ public class CodeExecutionService {
                     if (!entry.getKey().equals(mainFileName)) {
                         Map<String, String> fileObj = new HashMap<>();
                         fileObj.put("file", entry.getKey());
-                        fileObj.put("content", entry.getValue());
+                        // THE FIX: Wandbox expects "code" here, not "content"
+                        fileObj.put("code", entry.getValue()); 
                         extraFiles.add(fileObj);
                     }
                 }
