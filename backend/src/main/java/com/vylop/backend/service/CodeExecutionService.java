@@ -18,8 +18,8 @@ import java.util.Map;
 @Service
 public class CodeExecutionService {
 
-    // Using the public Piston API for secure remote code execution
-    private static final String PISTON_API_URL = "https://emacs.piston.rs/api/v2/execute";
+    // Switched to Wandbox API: 100% free, no API keys, and no IP whitelists required.
+    private static final String WANDBOX_API_URL = "https://wandbox.org/api/compile.json";
     private final RestTemplate restTemplate;
 
     public CodeExecutionService() {
@@ -28,79 +28,68 @@ public class CodeExecutionService {
 
     public String executeCode(String language, String code, String input, String mainFileName, Map<String, String> files) {
         try {
-            String pistonLang = mapLanguage(language);
-            if (pistonLang == null) {
-                return "Error: Language '" + language + "' is not supported.";
+            String compiler = mapLanguageToCompiler(language);
+            if (compiler == null) {
+                return "Error: Language '" + language + "' is not supported by the sandbox.";
             }
 
-            // 1. Build the payload for the Piston API
+            // 1. Build the payload for Wandbox API
             Map<String, Object> requestBody = new HashMap<>();
-            requestBody.put("language", pistonLang);
-            requestBody.put("version", "*"); // Asterisk tells Piston to use the latest available version
-
-            List<Map<String, String>> pistonFiles = new ArrayList<>();
+            requestBody.put("compiler", compiler);
+            requestBody.put("code", code); // The main file's code
             
-            // 2. Map frontend files to Piston's required file array structure
-            if (files != null && !files.isEmpty()) {
-                for (Map.Entry<String, String> entry : files.entrySet()) {
-                    Map<String, String> fileObj = new HashMap<>();
-                    fileObj.put("name", entry.getKey());
-                    fileObj.put("content", entry.getValue());
-                    pistonFiles.add(fileObj);
-                }
-            } else {
-                // Fallback if no files map is provided
-                Map<String, String> fileObj = new HashMap<>();
-                fileObj.put("name", mainFileName);
-                fileObj.put("content", code);
-                pistonFiles.add(fileObj);
-            }
-            
-            requestBody.put("files", pistonFiles);
-
-            // 3. Attach STDIN if the user provided any
+            // Attach STDIN if provided
             if (input != null && !input.isEmpty()) {
                 requestBody.put("stdin", input);
             }
 
-            // 4. Send the POST request to the API
+            // 2. Map additional files (Wandbox uses a "codes" array for multi-file projects)
+            if (files != null && files.size() > 1) {
+                List<Map<String, String>> extraFiles = new ArrayList<>();
+                for (Map.Entry<String, String> entry : files.entrySet()) {
+                    // Skip the main file since it's already attached above
+                    if (!entry.getKey().equals(mainFileName)) {
+                        Map<String, String> fileObj = new HashMap<>();
+                        fileObj.put("file", entry.getKey());
+                        fileObj.put("content", entry.getValue());
+                        extraFiles.add(fileObj);
+                    }
+                }
+                if (!extraFiles.isEmpty()) {
+                    requestBody.put("codes", extraFiles);
+                }
+            }
+
+            // 3. Send the POST request
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_JSON);
             HttpEntity<Map<String, Object>> entity = new HttpEntity<>(requestBody, headers);
 
-            // FIX: Using ParameterizedTypeReference cleanly maps the JSON without raw type warnings or missing imports
             ResponseEntity<Map<String, Object>> response = restTemplate.exchange(
-                    PISTON_API_URL,
+                    WANDBOX_API_URL,
                     HttpMethod.POST,
                     entity,
                     new ParameterizedTypeReference<Map<String, Object>>() {}
             );
 
-            // 5. Parse the Response Safely
+            // 4. Parse Wandbox Response Safely
             if (response.getStatusCode() == HttpStatus.OK && response.getBody() != null) {
                 Map<String, Object> body = response.getBody();
                 
-                // Check for compilation errors first (e.g., C++ or Java syntax errors)
-                if (body.containsKey("compile")) {
-                    @SuppressWarnings("unchecked")
-                    Map<String, Object> compile = (Map<String, Object>) body.get("compile");
-                    if (compile.containsKey("code") && ((Integer) compile.get("code")) != 0) {
-                        return "Compilation Error:\n" + compile.get("stderr");
-                    }
+                String status = String.valueOf(body.getOrDefault("status", "1"));
+                String programMessage = body.containsKey("program_message") ? (String) body.get("program_message") : "";
+                String compilerMessage = body.containsKey("compiler_message") ? (String) body.get("compiler_message") : "";
+                
+                // If execution failed (status != 0), return the exact error
+                if (!"0".equals(status)) {
+                    return !compilerMessage.isEmpty() ? "Compilation Error:\n" + compilerMessage : "Runtime Error:\n" + programMessage;
                 }
                 
-                // Check for runtime execution output
-                if (body.containsKey("run")) {
-                    @SuppressWarnings("unchecked")
-                    Map<String, Object> run = (Map<String, Object>) body.get("run");
-                    String stdout = (String) run.getOrDefault("stdout", "");
-                    String stderr = (String) run.getOrDefault("stderr", "");
-                    
-                    return stderr.isEmpty() ? stdout : stdout + "\nError Output:\n" + stderr;
-                }
+                // If successful, return output (fallback to compiler message if no console output)
+                return programMessage.isEmpty() ? compilerMessage : programMessage;
             }
             
-            return "Error: Could not execute code. Piston API returned an unexpected response.";
+            return "Error: Sandbox API returned an unexpected response.";
 
         } catch (Exception e) {
             return "Sandbox Connection Error: Failed to reach remote execution engine. Details: " + e.getMessage();
@@ -108,18 +97,18 @@ public class CodeExecutionService {
     }
 
     /**
-     * Maps the frontend language string to the exact language identifier required by Piston API.
+     * Maps the frontend language string to the exact compiler name required by Wandbox API.
      */
-    private String mapLanguage(String language) {
+    private String mapLanguageToCompiler(String language) {
         switch (language.toLowerCase()) {
-            case "java": return "java";
-            case "python": return "python";
+            case "java": return "openjdk-head";
+            case "python": return "cpython-head";
             case "cpp": 
-            case "c++": return "cpp";
-            case "javascript": return "javascript";
-            case "typescript": return "typescript";
-            case "go": return "go";
-            case "rust": return "rust";
+            case "c++": return "gcc-head";
+            case "javascript": return "nodejs-head";
+            case "typescript": return "typescript-head";
+            case "go": return "go-head";
+            case "rust": return "rust-head";
             default: return null;
         }
     }
