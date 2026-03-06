@@ -1,6 +1,7 @@
 package com.vylop.backend.service;
 
-import org.springframework.core.ParameterizedTypeReference;
+import org.springframework.boot.json.JsonParser;
+import org.springframework.boot.json.JsonParserFactory;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -21,16 +22,17 @@ public class CodeExecutionService {
 
     private static final String WANDBOX_API_URL = "https://wandbox.org/api/compile.json";
     private static final String WANDBOX_LIST_URL = "https://wandbox.org/api/list.json";
-    private final RestTemplate restTemplate;
     
-    // Caches the dynamically fetched compiler names so we only ask Wandbox once
+    private final RestTemplate restTemplate;
+    private final JsonParser springJsonParser; // Using Spring's native parser to bypass VS Code Jackson import errors
+    
     private final Map<String, String> compilerCache = new ConcurrentHashMap<>();
 
-    // Disguise our Java backend as a standard Chrome Browser to bypass API bot-blocks
     private static final String BROWSER_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
     public CodeExecutionService() {
         this.restTemplate = new RestTemplate();
+        this.springJsonParser = JsonParserFactory.getJsonParser();
     }
 
     public String executeCode(String language, String code, String input, String mainFileName, Map<String, String> files) {
@@ -40,7 +42,7 @@ public class CodeExecutionService {
                 return "Error: Language '" + language + "' is not supported by the sandbox.";
             }
 
-            // 1. Build the payload for Wandbox API
+            // 1. Build the payload
             Map<String, Object> requestBody = new HashMap<>();
             requestBody.put("compiler", compiler);
             requestBody.put("code", code); 
@@ -64,23 +66,23 @@ public class CodeExecutionService {
                 }
             }
 
-            // 2. Attach our headers with the Browser User-Agent disguise
+            // 2. Set headers
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_JSON);
             headers.set(HttpHeaders.USER_AGENT, BROWSER_USER_AGENT);
             HttpEntity<Map<String, Object>> entity = new HttpEntity<>(requestBody, headers);
 
-            // 3. Send the POST request
-            ResponseEntity<Map<String, Object>> response = restTemplate.exchange(
+            // 3. Request a raw String to bypass the application/octet-stream error
+            ResponseEntity<String> response = restTemplate.exchange(
                     WANDBOX_API_URL,
                     HttpMethod.POST,
                     entity,
-                    new ParameterizedTypeReference<Map<String, Object>>() {}
+                    String.class
             );
 
-            // 4. Parse Wandbox Response
+            // 4. Manually parse the JSON String using Spring's native parser
             if (response.getStatusCode() == HttpStatus.OK && response.getBody() != null) {
-                Map<String, Object> body = response.getBody();
+                Map<String, Object> body = springJsonParser.parseMap(response.getBody());
                 
                 String status = String.valueOf(body.getOrDefault("status", "1"));
                 String programMessage = body.containsKey("program_message") ? (String) body.get("program_message") : "";
@@ -119,26 +121,29 @@ public class CodeExecutionService {
         }
 
         try {
-            // Attach the User-Agent disguise to the GET request as well
             HttpHeaders headers = new HttpHeaders();
             headers.set(HttpHeaders.USER_AGENT, BROWSER_USER_AGENT);
             HttpEntity<Void> entity = new HttpEntity<>(headers);
 
-            ResponseEntity<List<Map<String, Object>>> response = restTemplate.exchange(
+            // Request a raw String here as well
+            ResponseEntity<String> response = restTemplate.exchange(
                     WANDBOX_LIST_URL,
                     HttpMethod.GET,
                     entity,
-                    new ParameterizedTypeReference<List<Map<String, Object>>>() {}
+                    String.class
             );
             
             if (response.getStatusCode() == HttpStatus.OK && response.getBody() != null) {
-                List<Map<String, Object>> compilers = response.getBody();
+                List<Object> compilers = springJsonParser.parseList(response.getBody());
                 String selectedName = null;
                 
-                for (Map<String, Object> compiler : compilers) {
+                for (Object obj : compilers) {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> compiler = (Map<String, Object>) obj;
+                    
                     if (wandboxLang.equals(compiler.get("language"))) {
                         String name = (String) compiler.get("name");
-                        selectedName = name; // Update with the latest one found
+                        selectedName = name; 
                         
                         if (name.contains("head")) {
                             break; 
@@ -155,7 +160,6 @@ public class CodeExecutionService {
             System.out.println("Could not dynamically fetch compilers: " + e.getMessage());
         }
         
-        // Final desperate fallback if their list.json API is completely offline
         String fallback;
         switch (wandboxLang) {
             case "Java": fallback = "openjdk-head"; break;
