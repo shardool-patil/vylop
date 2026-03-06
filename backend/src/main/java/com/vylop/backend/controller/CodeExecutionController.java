@@ -12,14 +12,13 @@ import java.util.concurrent.ConcurrentHashMap;
 
 @RestController
 @RequestMapping("/api/execute")
-// --- FIX: Add Production URL to CrossOrigin ---
 @CrossOrigin(origins = {"http://localhost:5173", "https://vylop-frontend.onrender.com"})
 public class CodeExecutionController {
 
     @Autowired
     private CodeExecutionService executionService;
 
-    // --- NEW: Memory-Based Rate Limiter ---
+    // Memory-Based Rate Limiter
     // Stores the IP address and the timestamp of their last execution
     private final Map<String, Long> requestCounts = new ConcurrentHashMap<>();
     
@@ -54,7 +53,7 @@ public class CodeExecutionController {
         @SuppressWarnings("unchecked")
         Map<String, String> files = (Map<String, String>) payload.get("files");
         
-        // 3. Execute securely
+        // 3. Execute securely via Cloud Sandbox API
         String result = executionService.executeCode(language, code, input, mainFile, files);
         return ResponseEntity.ok(result);
     }

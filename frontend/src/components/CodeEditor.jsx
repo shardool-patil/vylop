@@ -13,8 +13,7 @@ import './CodeEditor.css';
 // Production Backend URL
 const API_BASE_URL = 'https://vylop.onrender.com';
 
-// Module-level set — prevents double-fetch on StrictMode first mount,
-// but gets cleared on unmount so re-entering the room works correctly.
+// Module-level set — prevents double-fetch on StrictMode first mount
 const loadedRooms = new Set();
 
 const CODE_SNIPPETS = {
@@ -49,8 +48,8 @@ const CodeEditor = () => {
         return location.state?.username || localStorage.getItem('username') || '';
     });
 
-    const [roomName] = useState(() => {
-        return location.state?.roomName || "Dev Workspace";
+    const [roomName, setRoomName] = useState(() => {
+        return location.state?.roomName || "Syncing Workspace...";
     });
 
     const [files, setFiles] = useState({
@@ -70,6 +69,9 @@ const CodeEditor = () => {
     const [chatMsg, setChatMsg] = useState("");
     const [typingUsers, setTypingUsers] = useState([]);
     const [splitDirection, setSplitDirection] = useState(window.innerWidth < 900 ? 'vertical' : 'horizontal');
+    const [wsConnected, setWsConnected] = useState(false);
+
+    const [editorTheme, setEditorTheme] = useState(() => localStorage.getItem('editorTheme') || 'vs-dark');
 
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [newFileLang, setNewFileLang] = useState("python");
@@ -111,11 +113,19 @@ const CodeEditor = () => {
     useEffect(() => {
         let isMounted = true;
 
-        const fetchWorkspace = async () => {
+        const fetchWorkspaceData = async () => {
             if (loadedRooms.has(roomId)) return;
             loadedRooms.add(roomId);
 
             try {
+                // 1. FETCH METADATA: Sync the room name from the backend
+                // This ensures direct link joiners see the correct name
+                const metaRes = await axios.get(`${API_BASE_URL}/api/workspace/${roomId}`);
+                if (isMounted && metaRes.data?.name) {
+                    setRoomName(metaRes.data.name);
+                }
+
+                // 2. FETCH FILES: Load existing code contents
                 const response = await axios.get(`${API_BASE_URL}/api/workspace/${roomId}/load`);
                 
                 if (!isMounted) return;
@@ -133,7 +143,7 @@ const CodeEditor = () => {
                     setFiles(newFilesState);
                     setActiveFile(Object.keys(newFilesState)[0]);
                     
-                    toast.success("Workspace loaded from cloud", { 
+                    toast.success("Workspace synced", { 
                         icon: '☁️',
                         id: 'workspace-loaded-toast'
                     });
@@ -141,21 +151,21 @@ const CodeEditor = () => {
             } catch (error) {
                 if (isMounted) {
                     loadedRooms.delete(roomId);
-                    console.log("No existing workspace found or error loading from DB.", error);
+                    setRoomName(prev => prev === "Syncing Workspace..." ? "Dev Workspace" : prev);
+                    console.log("Sync error:", error);
                 }
             }
         };
 
         if (roomId && username) {
-            fetchWorkspace();
+            fetchWorkspaceData();
         }
 
         return () => {
             isMounted = false;
-            // Clear on unmount so re-entering the room fetches fresh data
             loadedRooms.delete(roomId);
         };
-    }, [roomId, username]);
+    }, [roomId, username]); // do NOT add roomName here — it causes infinite re-fetching
 
     useEffect(() => {
         const handleResize = () => setSplitDirection(window.innerWidth < 900 ? 'vertical' : 'horizontal');
@@ -273,6 +283,12 @@ const CodeEditor = () => {
         }
     };
 
+    const handleThemeChange = (e) => {
+        setEditorTheme(e.target.value);
+        localStorage.setItem('editorTheme', e.target.value);
+        toast(`Theme set to ${e.target.value}`, { icon: '🎨' });
+    };
+
     useEffect(() => {
         if (!username) return;
 
@@ -300,6 +316,7 @@ const CodeEditor = () => {
             client.connect({}, () => {
                 stompClient.current = client;
                 isConnected.current = true;
+                setWsConnected(true);
                 clearTimeout(reconnectTimeout);
 
                 client.subscribe(`/topic/code/${roomId}`, (msg) => {
@@ -370,6 +387,7 @@ const CodeEditor = () => {
                 client.send(`/app/room/${roomId}/join`, {}, JSON.stringify({ username, type: "JOIN" }));
             }, (err) => {
                 isConnected.current = false;
+                setWsConnected(false);
                 stompClient.current = null;
                 reconnectTimeout = setTimeout(connectToSocket, 3000);
             });
@@ -386,6 +404,7 @@ const CodeEditor = () => {
                     stompClient.current.disconnect();
                 }
                 isConnected.current = false;
+                setWsConnected(false);
                 stompClient.current = null;
             }, 200);
         };
@@ -561,10 +580,14 @@ const CodeEditor = () => {
         toast.success(`${file.name} Downloaded!`);
     };
 
+    const copyRoomLink = () => {
+        const link = `${window.location.origin}/room/${roomId}`;
+        navigator.clipboard.writeText(link);
+        toast.success("Invite Link Copied!", { icon: '🔗' });
+    };
+
     return (
         <div className="app-container">
-            {/* Toaster removed — handled globally in App.jsx */}
-            
             {isModalOpen && (
                 <div className="modal-overlay">
                     <div className="custom-modal">
@@ -637,7 +660,10 @@ const CodeEditor = () => {
                 </div>
 
                 <div className="user-list">
-                    <div className="section-title">Online ({users.length})</div>
+                    <div className="section-title">
+                        Online ({users.length})
+                        <span className={`status-dot ${wsConnected ? 'connected' : 'disconnected'}`}></span>
+                    </div>
                     {users.map((u, i) => <Client key={i} username={u} color={getUserColor(u)} />)}
                 </div>
 
@@ -664,7 +690,7 @@ const CodeEditor = () => {
                 </div>
 
                 <div className="sidebar-header" style={{borderTop: '1px solid var(--border)'}}>
-                    <button className="btn btn-secondary" style={{flex:1, marginRight: '10px'}} onClick={() => {navigator.clipboard.writeText(roomId); toast.success("Copied!");}}>Copy ID</button>
+                    <button className="btn btn-secondary" style={{flex:1, marginRight: '10px'}} onClick={copyRoomLink}>Copy Link</button>
                     <button className="btn btn-danger" style={{flex:1}} onClick={() => navigate('/')}>Leave</button>
                 </div>
             </div>
@@ -699,6 +725,12 @@ const CodeEditor = () => {
                         </button>
 
                         <div className="toolbar-divider"></div>
+
+                        <select className="lang-select" value={editorTheme} onChange={handleThemeChange} title="Select Theme" style={{marginRight: '10px'}}>
+                            <option value="vs-dark">Dark Theme</option>
+                            <option value="light">Light Theme</option>
+                            <option value="hc-black">High Contrast</option>
+                        </select>
 
                         <select className="lang-select" value={files[activeFile]?.language || "java"} onChange={handleLanguageSelect} title="Select Language">
                             <option value="java">Java</option>
@@ -738,7 +770,7 @@ const CodeEditor = () => {
                             <Editor 
                                 height="100%" 
                                 language={files[activeFile]?.language === "cpp" ? "cpp" : files[activeFile]?.language} 
-                                theme="vs-dark" 
+                                theme={editorTheme}
                                 value={files[activeFile]?.value || ""} 
                                 onMount={handleEditorDidMount} 
                                 onChange={handleEditorChange} 
@@ -758,7 +790,9 @@ const CodeEditor = () => {
                                 <span>STDOUT (Output)</span>
                                 <button className="btn btn-secondary" style={{fontSize: '0.7rem', height: '26px', padding: '0 8px'}} onClick={() => setOutput("")}>Clear</button>
                             </div>
-                            <pre className="terminal-output">{output || "Run code to see output..."}</pre>
+                            <pre className={`terminal-output ${!output ? 'placeholder' : ''}`}>
+                                {output || "// Run code to see output..."}
+                            </pre>
                         </div>
                     </div>
                 </Split>

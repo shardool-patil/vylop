@@ -88,7 +88,7 @@
   backdrop-filter: blur(10px);
 }
 
-/* USER LIST */
+/* USER LIST & LIVE STATUS */
 .user-list {
   padding: 15px;
   height: 35%;
@@ -103,6 +103,45 @@
   letter-spacing: 1.5px;
   margin-bottom: 15px;
   font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* 🟢 CONNECTION PULSE INDICATOR */
+.status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    position: relative;
+    display: inline-block;
+}
+
+.status-dot.connected {
+    background-color: #2ea043;
+    box-shadow: 0 0 8px rgba(46, 160, 67, 0.6);
+}
+
+.status-dot.connected::after {
+    content: '';
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    background-color: inherit;
+    border-radius: 50%;
+    animation: pulse 2s ease-out infinite;
+    top: 0;
+    left: 0;
+}
+
+.status-dot.disconnected {
+    background-color: #f85149;
+    box-shadow: 0 0 8px rgba(248, 81, 73, 0.4);
+}
+
+@keyframes pulse {
+    0% { transform: scale(1); opacity: 1; }
+    100% { transform: scale(3.5); opacity: 0; }
 }
 
 /* CHAT AREA */
@@ -260,7 +299,6 @@
 
 .right-controls { justify-content: flex-end; }
 
-/* --- NEW: TOOLBAR DIVIDER --- */
 .toolbar-divider {
     width: 1px;
     height: 24px;
@@ -375,6 +413,13 @@
 
 .terminal-output { color: #aaa; }
 
+/* 📟 TERMINAL PLACEHOLDER */
+.terminal-output.placeholder {
+    color: #4b5563;
+    font-style: italic;
+    opacity: 0.7;
+}
+
 .gutter {
     background-color: var(--border);
     transition: background-color 0.2s ease;
@@ -448,10 +493,12 @@
     color: var(--text-main);
 }
 
+/* 📁 IMPROVED ACTIVE TAB STYLING */
 .file-tab.active {
     background-color: var(--bg-panel);
     color: var(--text-main);
     border-top: 2px solid #58a6ff; 
+    border-bottom: 2px solid #58a6ff; /* Bright bottom highlight */
     font-weight: 500;
     box-shadow: inset 0 2px 10px rgba(88, 166, 255, 0.05); 
 }
