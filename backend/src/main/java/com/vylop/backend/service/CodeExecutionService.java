@@ -16,6 +16,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 @Service
 public class CodeExecutionService {
@@ -49,7 +51,7 @@ public class CodeExecutionService {
                 requestBody.put("stdin", input);
             }
 
-            // 1. Filter out workspace pollution (e.g., don't send C++ files to the Go compiler)
+            // 1. Filter out workspace pollution
             List<Map<String, String>> extraFiles = new ArrayList<>();
             if (files != null && !files.isEmpty()) {
                 for (Map.Entry<String, String> entry : files.entrySet()) {
@@ -63,15 +65,31 @@ public class CodeExecutionService {
                 }
             }
 
-            // 2. Handle Java's strict filename requirement
+            // 2. The Bulletproof Java Delegator Workaround
             if (language.equalsIgnoreCase("java")) {
-                // Wandbox forces the top-level 'code' to be named 'prog.java'.
-                // To prevent the "class Main is public" error, we put a dummy comment here...
-                requestBody.put("code", "// Entry point is in " + mainFileName);
+                // Scan the code to dynamically find the actual class name
+                String actualClassName = "Main"; // Default fallback
+                Pattern pattern = Pattern.compile("public\\s+class\\s+([a-zA-Z0-9_]+)");
+                Matcher matcher = pattern.matcher(code);
                 
-                // ...and put the actual main code into the extra files array with its proper name.
+                if (matcher.find()) {
+                    actualClassName = matcher.group(1);
+                } else {
+                    // Fallback: If they didn't write "public class", just look for "class"
+                    Pattern fallbackPattern = Pattern.compile("class\\s+([a-zA-Z0-9_]+)");
+                    Matcher fallbackMatcher = fallbackPattern.matcher(code);
+                    if (fallbackMatcher.find()) {
+                        actualClassName = fallbackMatcher.group(1);
+                    }
+                }
+                
+                // Build the delegator to target the exact class name the user wrote
+                String delegatorCode = "public class prog { public static void main(String[] args) throws Exception { " + actualClassName + ".main(args); } }";
+                requestBody.put("code", delegatorCode);
+                
+                // Push the user's code to Wandbox using the exact required file name
                 Map<String, String> mainFileObj = new HashMap<>();
-                mainFileObj.put("file", mainFileName);
+                mainFileObj.put("file", actualClassName + ".java");
                 mainFileObj.put("code", code);
                 extraFiles.add(mainFileObj);
             } else {
@@ -115,9 +133,6 @@ public class CodeExecutionService {
         }
     }
 
-    /**
-     * Checks if a file belongs to the currently executing language to prevent compiler crashes.
-     */
     private boolean isRelatedFile(String fileName, String language) {
         if (fileName == null) return false;
         String lower = fileName.toLowerCase();
@@ -176,8 +191,6 @@ public class CodeExecutionService {
                         String name = (String) compiler.get("name");
                         selectedName = name; 
                         
-                        // FIX: If the compiler name does NOT contain "head", it's a stable version.
-                        // We break immediately to prefer stable versions over broken experimental ones.
                         if (!name.contains("head")) {
                             break; 
                         }
@@ -193,7 +206,6 @@ public class CodeExecutionService {
             System.out.println("Could not dynamically fetch compilers: " + e.getMessage());
         }
         
-        // Fallbacks
         String fallback;
         switch (wandboxLang) {
             case "Java": fallback = "openjdk-head"; break;
