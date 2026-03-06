@@ -24,7 +24,7 @@ public class CodeExecutionService {
     private static final String WANDBOX_LIST_URL = "https://wandbox.org/api/list.json";
     
     private final RestTemplate restTemplate;
-    private final JsonParser springJsonParser; // Using Spring's native parser to bypass VS Code Jackson import errors
+    private final JsonParser springJsonParser;
     
     private final Map<String, String> compilerCache = new ConcurrentHashMap<>();
 
@@ -42,37 +42,51 @@ public class CodeExecutionService {
                 return "Error: Language '" + language + "' is not supported by the sandbox.";
             }
 
-            // 1. Build the payload
             Map<String, Object> requestBody = new HashMap<>();
             requestBody.put("compiler", compiler);
-            requestBody.put("code", code); 
             
             if (input != null && !input.isEmpty()) {
                 requestBody.put("stdin", input);
             }
 
-            if (files != null && files.size() > 1) {
-                List<Map<String, String>> extraFiles = new ArrayList<>();
+            // 1. Filter out workspace pollution (e.g., don't send C++ files to the Go compiler)
+            List<Map<String, String>> extraFiles = new ArrayList<>();
+            if (files != null && !files.isEmpty()) {
                 for (Map.Entry<String, String> entry : files.entrySet()) {
-                    if (!entry.getKey().equals(mainFileName)) {
+                    String fName = entry.getKey();
+                    if (!fName.equals(mainFileName) && isRelatedFile(fName, language)) {
                         Map<String, String> fileObj = new HashMap<>();
-                        fileObj.put("file", entry.getKey());
+                        fileObj.put("file", fName);
                         fileObj.put("code", entry.getValue());
                         extraFiles.add(fileObj);
                     }
                 }
-                if (!extraFiles.isEmpty()) {
-                    requestBody.put("codes", extraFiles);
-                }
             }
 
-            // 2. Set headers
+            // 2. Handle Java's strict filename requirement
+            if (language.equalsIgnoreCase("java")) {
+                // Wandbox forces the top-level 'code' to be named 'prog.java'.
+                // To prevent the "class Main is public" error, we put a dummy comment here...
+                requestBody.put("code", "// Entry point is in " + mainFileName);
+                
+                // ...and put the actual main code into the extra files array with its proper name.
+                Map<String, String> mainFileObj = new HashMap<>();
+                mainFileObj.put("file", mainFileName);
+                mainFileObj.put("code", code);
+                extraFiles.add(mainFileObj);
+            } else {
+                requestBody.put("code", code);
+            }
+
+            if (!extraFiles.isEmpty()) {
+                requestBody.put("codes", extraFiles);
+            }
+
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_JSON);
             headers.set(HttpHeaders.USER_AGENT, BROWSER_USER_AGENT);
             HttpEntity<Map<String, Object>> entity = new HttpEntity<>(requestBody, headers);
 
-            // 3. Request a raw String to bypass the application/octet-stream error
             ResponseEntity<String> response = restTemplate.exchange(
                     WANDBOX_API_URL,
                     HttpMethod.POST,
@@ -80,7 +94,6 @@ public class CodeExecutionService {
                     String.class
             );
 
-            // 4. Manually parse the JSON String using Spring's native parser
             if (response.getStatusCode() == HttpStatus.OK && response.getBody() != null) {
                 Map<String, Object> body = springJsonParser.parseMap(response.getBody());
                 
@@ -99,6 +112,25 @@ public class CodeExecutionService {
 
         } catch (Exception e) {
             return "Sandbox Connection Error: Failed to reach remote execution engine. Details: " + e.getMessage();
+        }
+    }
+
+    /**
+     * Checks if a file belongs to the currently executing language to prevent compiler crashes.
+     */
+    private boolean isRelatedFile(String fileName, String language) {
+        if (fileName == null) return false;
+        String lower = fileName.toLowerCase();
+        switch (language.toLowerCase()) {
+            case "java": return lower.endsWith(".java");
+            case "python": return lower.endsWith(".py");
+            case "cpp": 
+            case "c++": return lower.endsWith(".cpp") || lower.endsWith(".c") || lower.endsWith(".h") || lower.endsWith(".hpp");
+            case "javascript": return lower.endsWith(".js");
+            case "typescript": return lower.endsWith(".ts");
+            case "go": return lower.endsWith(".go");
+            case "rust": return lower.endsWith(".rs");
+            default: return true;
         }
     }
 
@@ -125,7 +157,6 @@ public class CodeExecutionService {
             headers.set(HttpHeaders.USER_AGENT, BROWSER_USER_AGENT);
             HttpEntity<Void> entity = new HttpEntity<>(headers);
 
-            // Request a raw String here as well
             ResponseEntity<String> response = restTemplate.exchange(
                     WANDBOX_LIST_URL,
                     HttpMethod.GET,
@@ -141,11 +172,13 @@ public class CodeExecutionService {
                     @SuppressWarnings("unchecked")
                     Map<String, Object> compiler = (Map<String, Object>) obj;
                     
-                    if (wandboxLang.equals(compiler.get("language"))) {
+                    if (wandboxLang.equalsIgnoreCase((String) compiler.get("language"))) {
                         String name = (String) compiler.get("name");
                         selectedName = name; 
                         
-                        if (name.contains("head")) {
+                        // FIX: If the compiler name does NOT contain "head", it's a stable version.
+                        // We break immediately to prefer stable versions over broken experimental ones.
+                        if (!name.contains("head")) {
                             break; 
                         }
                     }
@@ -160,6 +193,7 @@ public class CodeExecutionService {
             System.out.println("Could not dynamically fetch compilers: " + e.getMessage());
         }
         
+        // Fallbacks
         String fallback;
         switch (wandboxLang) {
             case "Java": fallback = "openjdk-head"; break;
