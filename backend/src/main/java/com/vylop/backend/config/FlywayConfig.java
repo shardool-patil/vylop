@@ -8,13 +8,13 @@ import org.springframework.context.annotation.Configuration;
 @Configuration
 public class FlywayConfig {
 
-    @Value("${DB_URL:jdbc:postgresql://localhost:5432/vylopdb}")
+    @Value("${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/vylopdb}")
     private String dbUrl;
 
-    @Value("${DB_USER:postgres}")
+    @Value("${SPRING_DATASOURCE_USERNAME:postgres}")
     private String dbUser;
 
-    @Value("${DB_PASSWORD:vylop_admin}")
+    @Value("${SPRING_DATASOURCE_PASSWORD:vylop_admin}")
     private String dbPassword;
 
     @Bean(initMethod = "migrate")
