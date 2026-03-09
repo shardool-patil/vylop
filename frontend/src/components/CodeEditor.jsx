@@ -721,7 +721,7 @@ const CodeEditor = () => {
                         Online ({users.length})
                         <span className={`status-dot ${wsConnected ? 'connected' : 'disconnected'}`}></span>
                     </div>
-                    {/* NEW: Premium Users List UI */}
+                    {/* NEW: Premium Users List UI with Stacked Roles */}
                     <div className="users-container" style={{ display: 'flex', flexDirection: 'column', gap: '12px', padding: '15px' }}>
                         {users.map((u, i) => (
                             <div key={i} style={{ 
@@ -734,38 +734,42 @@ const CodeEditor = () => {
                                 gap: '12px',
                                 boxShadow: '0 4px 6px rgba(0,0,0,0.1)'
                             }}>
-                                {/* Top Row: Avatar, Name, Dot, and Role */}
-                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                                        {/* Custom Avatar (Bypasses Client component to fix layout) */}
-                                        <div style={{ 
-                                            width: '36px', height: '36px', borderRadius: '8px', 
-                                            backgroundColor: getUserColor(u.username), 
-                                            display: 'flex', alignItems: 'center', justifyContent: 'center', 
-                                            fontWeight: 'bold', color: '#fff', fontSize: '16px',
-                                            textShadow: '0 1px 2px rgba(0,0,0,0.3)'
-                                        }}>
-                                            {u.username.charAt(0).toUpperCase()}
-                                        </div>
-                                        
+                                {/* Top Row: Avatar and Text Column */}
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                    {/* Custom Avatar */}
+                                    <div style={{ 
+                                        width: '36px', height: '36px', borderRadius: '8px', 
+                                        backgroundColor: getUserColor(u.username), 
+                                        display: 'flex', alignItems: 'center', justifyContent: 'center', 
+                                        fontWeight: 'bold', color: '#fff', fontSize: '16px',
+                                        textShadow: '0 1px 2px rgba(0,0,0,0.3)',
+                                        flexShrink: 0
+                                    }}>
+                                        {u.username.charAt(0).toUpperCase()}
+                                    </div>
+                                    
+                                    {/* Text Column: Name on top, Role underneath */}
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', overflow: 'hidden' }}>
+                                        {/* Name + Dot */}
                                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                            <span style={{ fontSize: '0.95rem', fontWeight: '600', color: '#e1e4e8', maxWidth: '110px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                            <span style={{ fontSize: '0.95rem', fontWeight: '600', color: '#e1e4e8', maxWidth: '120px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                                 {u.username}
                                             </span>
-                                            {/* Perfectly spaced glowing green dot */}
-                                            <span style={{ width: '8px', height: '8px', backgroundColor: '#2ea043', borderRadius: '50%', display: 'inline-block', boxShadow: '0 0 6px #2ea043' }} title="Online"></span>
+                                            <span style={{ width: '8px', height: '8px', backgroundColor: '#2ea043', borderRadius: '50%', display: 'inline-block', boxShadow: '0 0 6px #2ea043', flexShrink: 0 }} title="Online"></span>
+                                        </div>
+
+                                        {/* Modern Colored Role Badge */}
+                                        <div style={{ display: 'flex' }}>
+                                            <span style={{ 
+                                                fontSize: '0.65rem', fontWeight: '700', padding: '2px 6px', borderRadius: '4px', letterSpacing: '0.5px',
+                                                backgroundColor: u.role === 'HOST' ? 'rgba(210, 153, 34, 0.15)' : u.role === 'EDITOR' ? 'rgba(46, 160, 67, 0.15)' : 'rgba(139, 148, 158, 0.15)',
+                                                color: u.role === 'HOST' ? '#d29922' : u.role === 'EDITOR' ? '#3fb950' : '#8b949e',
+                                                border: `1px solid ${u.role === 'HOST' ? 'rgba(210, 153, 34, 0.4)' : u.role === 'EDITOR' ? 'rgba(46, 160, 67, 0.4)' : 'rgba(139, 148, 158, 0.4)'}`
+                                            }}>
+                                                {u.role}
+                                            </span>
                                         </div>
                                     </div>
-
-                                    {/* Modern Colored Role Badges */}
-                                    <span style={{ 
-                                        fontSize: '0.65rem', fontWeight: '700', padding: '4px 8px', borderRadius: '12px', letterSpacing: '0.5px',
-                                        backgroundColor: u.role === 'HOST' ? 'rgba(210, 153, 34, 0.15)' : u.role === 'EDITOR' ? 'rgba(46, 160, 67, 0.15)' : 'rgba(139, 148, 158, 0.15)',
-                                        color: u.role === 'HOST' ? '#d29922' : u.role === 'EDITOR' ? '#3fb950' : '#8b949e',
-                                        border: `1px solid ${u.role === 'HOST' ? 'rgba(210, 153, 34, 0.4)' : u.role === 'EDITOR' ? 'rgba(46, 160, 67, 0.4)' : 'rgba(139, 148, 158, 0.4)'}`
-                                    }}>
-                                        {u.role}
-                                    </span>
                                 </div>
 
                                 {/* Bottom Row: Host Controls */}
