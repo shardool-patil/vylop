@@ -63,6 +63,8 @@ const CodeEditor = () => {
     const [isSaving, setIsSaving] = useState(false); 
 
     const [users, setUsers] = useState([]); 
+    const [currentUserRole, setCurrentUserRole] = useState('READ_ONLY'); // Added Role State
+
     const [isSidebarOpen, setIsSidebarOpen] = useState(true);
     const [isVimMode, setIsVimMode] = useState(false);
     const [messages, setMessages] = useState([]);
@@ -95,6 +97,17 @@ const CodeEditor = () => {
     const nextColorIndex = useRef(0);
     const disconnectTimeoutRef = useRef(null); 
 
+    // --- PERMISSION LOGIC ---
+    const isHost = currentUserRole === 'HOST';
+    const canEdit = currentUserRole === 'HOST' || currentUserRole === 'EDITOR';
+
+    const getTooltip = (requiredRole) => {
+        if (requiredRole === 'HOST' && !isHost) return "Only the host can perform this action";
+        if (requiredRole === 'EDITOR' && !canEdit) return "You are in read-only mode";
+        return "";
+    };
+    // ------------------------
+
     const getUserColor = (user) => {
         if (!userColorMap.current[user]) {
             userColorMap.current[user] = CURSOR_COLORS[nextColorIndex.current % CURSOR_COLORS.length];
@@ -118,14 +131,11 @@ const CodeEditor = () => {
             loadedRooms.add(roomId);
 
             try {
-                // 1. FETCH METADATA: Sync the room name from the backend
-                // This ensures direct link joiners see the correct name
                 const metaRes = await axios.get(`${API_BASE_URL}/api/workspace/${roomId}`);
                 if (isMounted && metaRes.data?.name) {
                     setRoomName(metaRes.data.name);
                 }
 
-                // 2. FETCH FILES: Load existing code contents
                 const response = await axios.get(`${API_BASE_URL}/api/workspace/${roomId}/load`);
                 
                 if (!isMounted) return;
@@ -165,7 +175,7 @@ const CodeEditor = () => {
             isMounted = false;
             loadedRooms.delete(roomId);
         };
-    }, [roomId, username]); // do NOT add roomName here — it causes infinite re-fetching
+    }, [roomId, username]);
 
     useEffect(() => {
         const handleResize = () => setSplitDirection(window.innerWidth < 900 ? 'vertical' : 'horizontal');
@@ -289,6 +299,25 @@ const CodeEditor = () => {
         toast(`Theme set to ${e.target.value}`, { icon: '🎨' });
     };
 
+    // --- HOST CONTROLS ---
+    const changeUserRole = (targetUser, newRole) => {
+        if (stompClient.current?.connected && isHost) {
+            stompClient.current.send(`/app/room/${roomId}/roleChange`, {}, JSON.stringify({
+                targetUser: targetUser,
+                newRole: newRole
+            }));
+        }
+    };
+
+    const kickTargetUser = (targetUser) => {
+        if (stompClient.current?.connected && isHost) {
+            stompClient.current.send(`/app/room/${roomId}/kick`, {}, JSON.stringify({
+                targetUser: targetUser
+            }));
+        }
+    };
+    // -----------------------
+
     useEffect(() => {
         if (!username) return;
 
@@ -346,24 +375,44 @@ const CodeEditor = () => {
 
                 client.subscribe(`/topic/users/${roomId}`, (msg) => {
                     const body = JSON.parse(msg.body);
-                    body.activeUsers.forEach(activeUser => getUserColor(activeUser));
-                    setUsers(body.activeUsers);
                     
-                    Object.keys(remoteCursors.current).forEach(existingUser => {
-                        if (!body.activeUsers.includes(existingUser)) {
-                            if (editorRef.current) editorRef.current.removeContentWidget(remoteCursors.current[existingUser]);
-                            delete remoteCursors.current[existingUser];
+                    // Handle KICK event
+                    if (body.type === 'KICK') {
+                        if (body.username === username) {
+                            toast.error("You have been kicked from the room by the host.", { icon: '🥾', duration: 5000 });
+                            window.location.href = '/'; 
+                            return;
+                        } else {
+                            toast(`${body.username} was kicked by the host.`);
                         }
-                    });
-
-                    if (body.username !== username) {
+                    } else if (body.username !== username) {
+                        // Regular notifications
                         const toastKey = `${body.type}-${body.username}`;
                         if (!notifiedUsers.current.has(toastKey)) {
                             if (body.type === "JOIN") toast.success(`${body.username} joined`);
                             if (body.type === "LEAVE") toast(`${body.username} left`);
+                            if (body.type === "ROLE_UPDATE") toast(`${body.username}'s role was updated`);
                             notifiedUsers.current.add(toastKey);
                             setTimeout(() => notifiedUsers.current.delete(toastKey), 4000);
                         }
+                    }
+
+                    // Backend now sends an array of objects in 'body.users'
+                    if (body.users) {
+                        body.users.forEach(activeUserObj => getUserColor(activeUserObj.username));
+                        setUsers(body.users);
+                        
+                        // Update current user's local role state
+                        const me = body.users.find(u => u.username === username);
+                        if (me) setCurrentUserRole(me.role);
+                        
+                        const activeUsernames = body.users.map(u => u.username);
+                        Object.keys(remoteCursors.current).forEach(existingUser => {
+                            if (!activeUsernames.includes(existingUser)) {
+                                if (editorRef.current) editorRef.current.removeContentWidget(remoteCursors.current[existingUser]);
+                                delete remoteCursors.current[existingUser];
+                            }
+                        });
                     }
                 });
 
@@ -415,6 +464,7 @@ const CodeEditor = () => {
     }, [messages, typingUsers]);
 
     const handleCreateNewFile = () => {
+        if (!canEdit) return; // Permission Guard
         if (!newFileName.trim()) {
             toast.error("File name cannot be empty");
             return;
@@ -441,6 +491,10 @@ const CodeEditor = () => {
 
     const handleDeleteIconClick = (e, fileName) => {
         e.stopPropagation(); 
+        if (!canEdit) {
+            toast.error("You are in read-only mode");
+            return;
+        }
         if (Object.keys(files).length === 1) {
             toast.error("You cannot delete the last remaining file.", { icon: '⚠️' });
             return;
@@ -450,7 +504,7 @@ const CodeEditor = () => {
     };
 
     const confirmDeleteFile = () => {
-        if (!fileToDelete) return;
+        if (!fileToDelete || !canEdit) return;
 
         setFiles(prev => {
             const newFiles = { ...prev };
@@ -470,6 +524,7 @@ const CodeEditor = () => {
     };
 
     const handleLanguageSelect = (e) => {
+        if (!isHost) return; // Permission Guard
         const newLang = e.target.value;
         const newCode = CODE_SNIPPETS[newLang];
 
@@ -486,7 +541,7 @@ const CodeEditor = () => {
     };
 
     const handleEditorChange = (value) => {
-        if (stompClient.current?.connected) {
+        if (stompClient.current?.connected && canEdit) { // Guard added
             isLocalChange.current = true;
             
             setFiles(prev => ({
@@ -521,6 +576,7 @@ const CodeEditor = () => {
     };
 
     const formatCode = () => {
+        if (!canEdit) return; // Permission Guard
         if (editorRef.current) {
             editorRef.current.getAction('editor.action.formatDocument').run();
             if (['javascript', 'typescript'].includes(files[activeFile]?.language)) {
@@ -551,6 +607,7 @@ const CodeEditor = () => {
     };
 
     const saveWorkspace = async () => {
+        if (!isHost) return; // Permission Guard
         setIsSaving(true);
         try {
             const fileData = {};
@@ -664,7 +721,32 @@ const CodeEditor = () => {
                         Online ({users.length})
                         <span className={`status-dot ${wsConnected ? 'connected' : 'disconnected'}`}></span>
                     </div>
-                    {users.map((u, i) => <Client key={i} username={u} color={getUserColor(u)} />)}
+                    {/* NEW: Users List mapped with Roles and Host Controls */}
+                    <div className="users-container" style={{ display: 'flex', flexDirection: 'column', gap: '8px', padding: '10px' }}>
+                        {users.map((u, i) => (
+                            <div key={i} style={{ display: 'flex', flexDirection: 'column', gap: '4px', paddingBottom: '8px', borderBottom: '1px solid var(--border)' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                        <Client username={u.username} color={getUserColor(u.username)} />
+                                        <span style={{ fontSize: '0.7rem', padding: '2px 6px', borderRadius: '4px', backgroundColor: 'var(--bg-lighter)', border: '1px solid var(--border)', color: 'var(--text-muted)' }}>
+                                            {u.role}
+                                        </span>
+                                    </div>
+                                </div>
+                                {/* Host Promotes/Demotes/Kicks */}
+                                {isHost && u.username !== username && (
+                                    <div style={{ display: 'flex', gap: '5px', marginTop: '4px' }}>
+                                        {u.role === 'READ_ONLY' ? (
+                                            <button onClick={() => changeUserRole(u.username, 'EDITOR')} style={{ fontSize: '0.7rem', padding: '2px 6px', background: '#2ea043', color: 'white', borderRadius: '3px', border: 'none', cursor: 'pointer' }}>Make Editor</button>
+                                        ) : (
+                                            <button onClick={() => changeUserRole(u.username, 'READ_ONLY')} style={{ fontSize: '0.7rem', padding: '2px 6px', background: '#d29922', color: 'white', borderRadius: '3px', border: 'none', cursor: 'pointer' }}>Make Read-Only</button>
+                                        )}
+                                        <button onClick={() => kickTargetUser(u.username)} style={{ fontSize: '0.7rem', padding: '2px 6px', background: '#da3633', color: 'white', borderRadius: '3px', border: 'none', cursor: 'pointer' }}>Kick</button>
+                                    </div>
+                                )}
+                            </div>
+                        ))}
+                    </div>
                 </div>
 
                 <div className="chat-area">
@@ -705,21 +787,42 @@ const CodeEditor = () => {
                     </div>
                     
                     <div className="toolbar-group right-controls">
-                        <button className="btn btn-secondary btn-icon" onClick={() => setIsModalOpen(true)} title="New File">
+                        {/* Modified: New File Button (requires Edit) */}
+                        <button 
+                            className={`btn btn-secondary btn-icon ${!canEdit ? 'opacity-50 cursor-not-allowed' : ''}`} 
+                            onClick={() => canEdit && setIsModalOpen(true)} 
+                            title={!canEdit ? getTooltip('EDITOR') : "New File"}
+                            disabled={!canEdit}
+                        >
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="12" y1="18" x2="12" y2="12"></line><line x1="9" y1="15" x2="15" y2="15"></line></svg>
                         </button>
-                        <button className="btn btn-secondary btn-icon" onClick={saveWorkspace} disabled={isSaving} title="Save to Cloud">
+
+                        {/* Modified: Save Workspace Button (requires Host) */}
+                        <button 
+                            className={`btn btn-secondary btn-icon ${(!isHost || isSaving) ? 'opacity-50 cursor-not-allowed' : ''}`} 
+                            onClick={() => isHost && saveWorkspace()} 
+                            disabled={!isHost || isSaving} 
+                            title={!isHost ? getTooltip('HOST') : "Save to Cloud"}
+                        >
                             {isSaving ? <svg className="spinner" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M12 2v4m0 12v4M4.93 4.93l2.83 2.83m8.48 8.48l2.83 2.83M2 12h4m12 0h4M4.93 19.07l2.83-2.83m8.48-8.48l2.83-2.83" /></svg> : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>}
                         </button>
+
                         <button className="btn btn-secondary btn-icon" onClick={downloadCode} title="Download File">
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
                         </button>
 
                         <div className="toolbar-divider"></div>
 
-                        <button className="btn btn-secondary btn-icon" onClick={formatCode} title="Format Code">
+                        {/* Modified: Format Code Button (requires Edit) */}
+                        <button 
+                            className={`btn btn-secondary btn-icon ${!canEdit ? 'opacity-50 cursor-not-allowed' : ''}`} 
+                            onClick={() => canEdit && formatCode()} 
+                            disabled={!canEdit}
+                            title={!canEdit ? getTooltip('EDITOR') : "Format Code"}
+                        >
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="21" y1="10" x2="3" y2="10"></line><line x1="21" y1="6" x2="3" y2="6"></line><line x1="21" y1="14" x2="3" y2="14"></line><line x1="21" y1="18" x2="3" y2="18"></line></svg>
                         </button>
+                        
                         <button className={`btn btn-icon ${isVimMode ? 'btn-primary' : 'btn-secondary'}`} onClick={toggleVimMode} title={isVimMode ? "Disable Vim Mode" : "Enable Vim Mode"}>
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="4 17 10 11 4 5"></polyline><line x1="12" y1="19" x2="20" y2="19"></line></svg>
                         </button>
@@ -732,7 +835,14 @@ const CodeEditor = () => {
                             <option value="hc-black">High Contrast</option>
                         </select>
 
-                        <select className="lang-select" value={files[activeFile]?.language || "java"} onChange={handleLanguageSelect} title="Select Language">
+                        {/* Modified: Language Selection (requires Host) */}
+                        <select 
+                            className={`lang-select ${!isHost ? 'opacity-50 cursor-not-allowed' : ''}`} 
+                            value={files[activeFile]?.language || "java"} 
+                            onChange={handleLanguageSelect} 
+                            disabled={!isHost}
+                            title={!isHost ? getTooltip('HOST') : "Select Language"}
+                        >
                             <option value="java">Java</option>
                             <option value="python">Python</option>
                             <option value="cpp">C++</option>
@@ -751,11 +861,12 @@ const CodeEditor = () => {
                     {Object.keys(files).map((fileName) => (
                         <div key={fileName} className={`file-tab ${activeFile === fileName ? 'active' : ''}`} onClick={() => setActiveFile(fileName)}>
                             <span className="file-tab-name">{fileName}</span>
+                            {/* Modified: File Delete X mark (requires Edit) */}
                             {Object.keys(files).length > 1 && (
                                 <span 
-                                    className="file-tab-close" 
-                                    onClick={(e) => handleDeleteIconClick(e, fileName)}
-                                    title="Delete File"
+                                    className={`file-tab-close ${!canEdit ? 'opacity-50 cursor-not-allowed' : ''}`} 
+                                    onClick={(e) => canEdit ? handleDeleteIconClick(e, fileName) : e.stopPropagation()}
+                                    title={!canEdit ? getTooltip('EDITOR') : "Delete File"}
                                 >
                                     &times;
                                 </span>
@@ -774,7 +885,16 @@ const CodeEditor = () => {
                                 value={files[activeFile]?.value || ""} 
                                 onMount={handleEditorDidMount} 
                                 onChange={handleEditorChange} 
-                                options={{ minimap: { enabled: false }, fontSize: 14, fontFamily: 'JetBrains Mono', automaticLayout: true, formatOnPaste: true }} 
+                                options={{ 
+                                    // --- NEW: Lock down the editor native features if READ_ONLY ---
+                                    readOnly: !canEdit,
+                                    domReadOnly: !canEdit,
+                                    minimap: { enabled: false }, 
+                                    fontSize: 14, 
+                                    fontFamily: 'JetBrains Mono', 
+                                    automaticLayout: true, 
+                                    formatOnPaste: true 
+                                }} 
                             />
                         </div>
                         <div id="vim-status-bar" className="vim-status-bar"></div>
