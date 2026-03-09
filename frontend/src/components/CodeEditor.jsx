@@ -721,27 +721,83 @@ const CodeEditor = () => {
                         Online ({users.length})
                         <span className={`status-dot ${wsConnected ? 'connected' : 'disconnected'}`}></span>
                     </div>
-                    {/* NEW: Users List mapped with Roles and Host Controls */}
-                    <div className="users-container" style={{ display: 'flex', flexDirection: 'column', gap: '8px', padding: '10px' }}>
+                    {/* NEW: Premium Users List UI */}
+                    <div className="users-container" style={{ display: 'flex', flexDirection: 'column', gap: '12px', padding: '15px' }}>
                         {users.map((u, i) => (
-                            <div key={i} style={{ display: 'flex', flexDirection: 'column', gap: '4px', paddingBottom: '8px', borderBottom: '1px solid var(--border)' }}>
+                            <div key={i} style={{ 
+                                backgroundColor: 'rgba(255, 255, 255, 0.03)', 
+                                borderRadius: '10px', 
+                                padding: '12px', 
+                                border: '1px solid rgba(255, 255, 255, 0.08)',
+                                display: 'flex',
+                                flexDirection: 'column',
+                                gap: '12px',
+                                boxShadow: '0 4px 6px rgba(0,0,0,0.1)'
+                            }}>
+                                {/* Top Row: Avatar, Name, Dot, and Role */}
                                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                        <Client username={u.username} color={getUserColor(u.username)} />
-                                        <span style={{ fontSize: '0.7rem', padding: '2px 6px', borderRadius: '4px', backgroundColor: 'var(--bg-lighter)', border: '1px solid var(--border)', color: 'var(--text-muted)' }}>
-                                            {u.role}
-                                        </span>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                        {/* Custom Avatar (Bypasses Client component to fix layout) */}
+                                        <div style={{ 
+                                            width: '36px', height: '36px', borderRadius: '8px', 
+                                            backgroundColor: getUserColor(u.username), 
+                                            display: 'flex', alignItems: 'center', justifyContent: 'center', 
+                                            fontWeight: 'bold', color: '#fff', fontSize: '16px',
+                                            textShadow: '0 1px 2px rgba(0,0,0,0.3)'
+                                        }}>
+                                            {u.username.charAt(0).toUpperCase()}
+                                        </div>
+                                        
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                            <span style={{ fontSize: '0.95rem', fontWeight: '600', color: '#e1e4e8', maxWidth: '110px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                                {u.username}
+                                            </span>
+                                            {/* Perfectly spaced glowing green dot */}
+                                            <span style={{ width: '8px', height: '8px', backgroundColor: '#2ea043', borderRadius: '50%', display: 'inline-block', boxShadow: '0 0 6px #2ea043' }} title="Online"></span>
+                                        </div>
                                     </div>
+
+                                    {/* Modern Colored Role Badges */}
+                                    <span style={{ 
+                                        fontSize: '0.65rem', fontWeight: '700', padding: '4px 8px', borderRadius: '12px', letterSpacing: '0.5px',
+                                        backgroundColor: u.role === 'HOST' ? 'rgba(210, 153, 34, 0.15)' : u.role === 'EDITOR' ? 'rgba(46, 160, 67, 0.15)' : 'rgba(139, 148, 158, 0.15)',
+                                        color: u.role === 'HOST' ? '#d29922' : u.role === 'EDITOR' ? '#3fb950' : '#8b949e',
+                                        border: `1px solid ${u.role === 'HOST' ? 'rgba(210, 153, 34, 0.4)' : u.role === 'EDITOR' ? 'rgba(46, 160, 67, 0.4)' : 'rgba(139, 148, 158, 0.4)'}`
+                                    }}>
+                                        {u.role}
+                                    </span>
                                 </div>
-                                {/* Host Promotes/Demotes/Kicks */}
+
+                                {/* Bottom Row: Host Controls */}
                                 {isHost && u.username !== username && (
-                                    <div style={{ display: 'flex', gap: '5px', marginTop: '4px' }}>
+                                    <div style={{ display: 'flex', gap: '8px', paddingTop: '10px', borderTop: '1px dashed rgba(255,255,255,0.1)' }}>
                                         {u.role === 'READ_ONLY' ? (
-                                            <button onClick={() => changeUserRole(u.username, 'EDITOR')} style={{ fontSize: '0.7rem', padding: '2px 6px', background: '#2ea043', color: 'white', borderRadius: '3px', border: 'none', cursor: 'pointer' }}>Make Editor</button>
+                                            <button 
+                                                onClick={() => changeUserRole(u.username, 'EDITOR')} 
+                                                style={{ flex: 1, fontSize: '0.75rem', padding: '6px', background: 'rgba(46, 160, 67, 0.1)', color: '#3fb950', border: '1px solid rgba(46, 160, 67, 0.5)', borderRadius: '6px', cursor: 'pointer', transition: 'all 0.2s ease', fontWeight: '600' }}
+                                                onMouseOver={(e) => { e.target.style.background = '#2ea043'; e.target.style.color = '#fff'; }}
+                                                onMouseOut={(e) => { e.target.style.background = 'rgba(46, 160, 67, 0.1)'; e.target.style.color = '#3fb950'; }}
+                                            >
+                                                ↑ Promote
+                                            </button>
                                         ) : (
-                                            <button onClick={() => changeUserRole(u.username, 'READ_ONLY')} style={{ fontSize: '0.7rem', padding: '2px 6px', background: '#d29922', color: 'white', borderRadius: '3px', border: 'none', cursor: 'pointer' }}>Make Read-Only</button>
+                                            <button 
+                                                onClick={() => changeUserRole(u.username, 'READ_ONLY')} 
+                                                style={{ flex: 1, fontSize: '0.75rem', padding: '6px', background: 'rgba(210, 153, 34, 0.1)', color: '#d29922', border: '1px solid rgba(210, 153, 34, 0.5)', borderRadius: '6px', cursor: 'pointer', transition: 'all 0.2s ease', fontWeight: '600' }}
+                                                onMouseOver={(e) => { e.target.style.background = '#d29922'; e.target.style.color = '#fff'; }}
+                                                onMouseOut={(e) => { e.target.style.background = 'rgba(210, 153, 34, 0.1)'; e.target.style.color = '#d29922'; }}
+                                            >
+                                                ↓ Demote
+                                            </button>
                                         )}
-                                        <button onClick={() => kickTargetUser(u.username)} style={{ fontSize: '0.7rem', padding: '2px 6px', background: '#da3633', color: 'white', borderRadius: '3px', border: 'none', cursor: 'pointer' }}>Kick</button>
+                                        <button 
+                                            onClick={() => kickTargetUser(u.username)} 
+                                            style={{ flex: 0.6, fontSize: '0.75rem', padding: '6px', background: 'rgba(218, 54, 51, 0.1)', color: '#da3633', border: '1px solid rgba(218, 54, 51, 0.5)', borderRadius: '6px', cursor: 'pointer', transition: 'all 0.2s ease', fontWeight: '600' }}
+                                            onMouseOver={(e) => { e.target.style.background = '#da3633'; e.target.style.color = '#fff'; }}
+                                            onMouseOut={(e) => { e.target.style.background = 'rgba(218, 54, 51, 0.1)'; e.target.style.color = '#da3633'; }}
+                                        >
+                                            ✕ Kick
+                                        </button>
                                     </div>
                                 )}
                             </div>
