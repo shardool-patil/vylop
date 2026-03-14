@@ -88,7 +88,6 @@ const CodeEditor = () => {
     const remoteCursors = useRef({}); 
     const chatContainerRef = useRef(null);
     const typingTimeoutRef = useRef(null);
-    const isLocalChange = useRef(false);
     const stompClient = useRef(null);
     const isConnected = useRef(false);
     const notifiedUsers = useRef(new Set()); 
@@ -360,7 +359,7 @@ const CodeEditor = () => {
                         if (body.sender !== username) {
                             toast(`${body.sender} deleted ${body.fileName}`, { icon: '🗑️' });
                         }
-                    } else if (!isLocalChange.current) {
+                    } else if (body.sender !== username) {
                         setFiles(prev => ({
                             ...prev,
                             [body.fileName]: {
@@ -370,7 +369,6 @@ const CodeEditor = () => {
                             }
                         }));
                     }
-                    isLocalChange.current = false;
                 });
 
                 client.subscribe(`/topic/users/${roomId}`, (msg) => {
@@ -540,8 +538,6 @@ const CodeEditor = () => {
 
     const handleEditorChange = (value) => {
         if (stompClient.current?.connected && canEdit) { 
-            isLocalChange.current = true;
-            
             setFiles(prev => ({
                 ...prev,
                 [activeFile]: { ...prev[activeFile], value }
@@ -1019,7 +1015,6 @@ const CodeEditor = () => {
                                 <span>STDOUT (Output)</span>
                                 <button className="btn btn-secondary" style={{fontSize: '0.7rem', height: '26px', padding: '0 8px'}} onClick={() => setOutput("")}>Clear</button>
                             </div>
-                            {/* UPDATED: Replaced raw <pre> with a div mapping the formatted output */}
                             <div className={`terminal-output ${!output ? 'placeholder' : ''}`} style={{ overflowY: 'auto', padding: '10px', height: '100%', backgroundColor: 'var(--bg-dark)' }}>
                                 {renderFormattedOutput(output)}
                             </div>
