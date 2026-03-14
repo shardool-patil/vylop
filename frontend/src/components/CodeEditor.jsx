@@ -63,7 +63,7 @@ const CodeEditor = () => {
     const [isSaving, setIsSaving] = useState(false); 
 
     const [users, setUsers] = useState([]); 
-    const [currentUserRole, setCurrentUserRole] = useState('READ_ONLY'); // Added Role State
+    const [currentUserRole, setCurrentUserRole] = useState('READ_ONLY');
 
     const [isSidebarOpen, setIsSidebarOpen] = useState(true);
     const [isVimMode, setIsVimMode] = useState(false);
@@ -397,12 +397,10 @@ const CodeEditor = () => {
                         }
                     }
 
-                    // Backend now sends an array of objects in 'body.users'
                     if (body.users) {
                         body.users.forEach(activeUserObj => getUserColor(activeUserObj.username));
                         setUsers(body.users);
                         
-                        // Update current user's local role state
                         const me = body.users.find(u => u.username === username);
                         if (me) setCurrentUserRole(me.role);
                         
@@ -464,7 +462,7 @@ const CodeEditor = () => {
     }, [messages, typingUsers]);
 
     const handleCreateNewFile = () => {
-        if (!canEdit) return; // Permission Guard
+        if (!canEdit) return; 
         if (!newFileName.trim()) {
             toast.error("File name cannot be empty");
             return;
@@ -524,7 +522,7 @@ const CodeEditor = () => {
     };
 
     const handleLanguageSelect = (e) => {
-        if (!isHost) return; // Permission Guard
+        if (!isHost) return; 
         const newLang = e.target.value;
         const newCode = CODE_SNIPPETS[newLang];
 
@@ -541,7 +539,7 @@ const CodeEditor = () => {
     };
 
     const handleEditorChange = (value) => {
-        if (stompClient.current?.connected && canEdit) { // Guard added
+        if (stompClient.current?.connected && canEdit) { 
             isLocalChange.current = true;
             
             setFiles(prev => ({
@@ -576,7 +574,7 @@ const CodeEditor = () => {
     };
 
     const formatCode = () => {
-        if (!canEdit) return; // Permission Guard
+        if (!canEdit) return; 
         if (editorRef.current) {
             editorRef.current.getAction('editor.action.formatDocument').run();
             if (['javascript', 'typescript'].includes(files[activeFile]?.language)) {
@@ -607,7 +605,7 @@ const CodeEditor = () => {
     };
 
     const saveWorkspace = async () => {
-        if (!isHost) return; // Permission Guard
+        if (!isHost) return; 
         setIsSaving(true);
         try {
             const fileData = {};
@@ -641,6 +639,69 @@ const CodeEditor = () => {
         const link = `${window.location.origin}/room/${roomId}`;
         navigator.clipboard.writeText(link);
         toast.success("Invite Link Copied!", { icon: '🔗' });
+    };
+
+    // --- NEW: MONACO CURSOR JUMP LOGIC ---
+    const handleJumpToLine = (fileName, lineNumber) => {
+        if (files[fileName]) {
+            if (activeFile !== fileName) {
+                setActiveFile(fileName);
+            }
+            // Add a tiny delay to let Monaco switch tabs if necessary before scrolling
+            setTimeout(() => {
+                if (editorRef.current) {
+                    editorRef.current.revealLineInCenter(lineNumber);
+                    editorRef.current.setPosition({ lineNumber: lineNumber, column: 1 });
+                    editorRef.current.focus();
+                }
+            }, 50);
+        } else {
+            toast.error(`File ${fileName} not found.`);
+        }
+    };
+
+    // --- NEW: OUTPUT PARSER & FORMATTER ---
+    const renderFormattedOutput = (text) => {
+        if (!text) return "// Run code to see output...";
+
+        const lines = text.split('\n');
+
+        return lines.map((line, index) => {
+            // Heuristic to detect error lines
+            const isError = /(error|exception|traceback|failed|at\s+[\w.]+\.)/i.test(line);
+            const style = isError ? { color: '#ff6b6b' } : { color: '#e1e4e8' };
+
+            // Look for Java/C++ stack trace: "Main.java:5"
+            const match1 = line.match(/([a-zA-Z0-9_-]+\.[a-zA-Z0-9]+):(\d+)/);
+            // Look for Python stack trace: 'File "script.py", line 12'
+            const match2 = line.match(/File "([^"]+)", line (\d+)/);
+
+            let match = match1 || match2;
+
+            if (match) {
+                const fullMatch = match[0];
+                const fileName = match[1];
+                const lineNumber = parseInt(match[2], 10);
+
+                const parts = line.split(fullMatch);
+
+                return (
+                    <div key={index} style={{ ...style, fontFamily: 'JetBrains Mono, monospace', lineHeight: '1.5' }}>
+                        {parts[0]}
+                        <span 
+                            onClick={() => handleJumpToLine(fileName, lineNumber)}
+                            style={{ textDecoration: 'underline', cursor: 'pointer', color: '#58a6ff', fontWeight: 'bold' }}
+                            title={`Jump to line ${lineNumber} in ${fileName}`}
+                        >
+                            {fullMatch}
+                        </span>
+                        {parts[1]}
+                    </div>
+                );
+            }
+
+            return <div key={index} style={{ ...style, fontFamily: 'JetBrains Mono, monospace', lineHeight: '1.5' }}>{line}</div>;
+        });
     };
 
     return (
@@ -721,7 +782,7 @@ const CodeEditor = () => {
                         Online ({users.length})
                         <span className={`status-dot ${wsConnected ? 'connected' : 'disconnected'}`}></span>
                     </div>
-                    {/* NEW: Premium Users List UI with Stacked Roles */}
+                    
                     <div className="users-container" style={{ display: 'flex', flexDirection: 'column', gap: '12px', padding: '15px' }}>
                         {users.map((u, i) => (
                             <div key={i} style={{ 
@@ -734,9 +795,7 @@ const CodeEditor = () => {
                                 gap: '12px',
                                 boxShadow: '0 4px 6px rgba(0,0,0,0.1)'
                             }}>
-                                {/* Top Row: Avatar and Text Column */}
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                                    {/* Custom Avatar */}
                                     <div style={{ 
                                         width: '36px', height: '36px', borderRadius: '8px', 
                                         backgroundColor: getUserColor(u.username), 
@@ -748,9 +807,7 @@ const CodeEditor = () => {
                                         {u.username.charAt(0).toUpperCase()}
                                     </div>
                                     
-                                    {/* Text Column: Name on top, Role underneath */}
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', overflow: 'hidden' }}>
-                                        {/* Name + Dot */}
                                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                             <span style={{ fontSize: '0.95rem', fontWeight: '600', color: '#e1e4e8', maxWidth: '120px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                                 {u.username}
@@ -758,7 +815,6 @@ const CodeEditor = () => {
                                             <span style={{ width: '8px', height: '8px', backgroundColor: '#2ea043', borderRadius: '50%', display: 'inline-block', boxShadow: '0 0 6px #2ea043', flexShrink: 0 }} title="Online"></span>
                                         </div>
 
-                                        {/* Modern Colored Role Badge */}
                                         <div style={{ display: 'flex' }}>
                                             <span style={{ 
                                                 fontSize: '0.65rem', fontWeight: '700', padding: '2px 6px', borderRadius: '4px', letterSpacing: '0.5px',
@@ -772,7 +828,6 @@ const CodeEditor = () => {
                                     </div>
                                 </div>
 
-                                {/* Bottom Row: Host Controls */}
                                 {isHost && u.username !== username && (
                                     <div style={{ display: 'flex', gap: '8px', paddingTop: '10px', borderTop: '1px dashed rgba(255,255,255,0.1)' }}>
                                         {u.role === 'READ_ONLY' ? (
@@ -847,7 +902,6 @@ const CodeEditor = () => {
                     </div>
                     
                     <div className="toolbar-group right-controls">
-                        {/* Modified: New File Button (requires Edit) */}
                         <button 
                             className={`btn btn-secondary btn-icon ${!canEdit ? 'opacity-50 cursor-not-allowed' : ''}`} 
                             onClick={() => canEdit && setIsModalOpen(true)} 
@@ -857,7 +911,6 @@ const CodeEditor = () => {
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="12" y1="18" x2="12" y2="12"></line><line x1="9" y1="15" x2="15" y2="15"></line></svg>
                         </button>
 
-                        {/* Modified: Save Workspace Button (requires Host) */}
                         <button 
                             className={`btn btn-secondary btn-icon ${(!isHost || isSaving) ? 'opacity-50 cursor-not-allowed' : ''}`} 
                             onClick={() => isHost && saveWorkspace()} 
@@ -873,7 +926,6 @@ const CodeEditor = () => {
 
                         <div className="toolbar-divider"></div>
 
-                        {/* Modified: Format Code Button (requires Edit) */}
                         <button 
                             className={`btn btn-secondary btn-icon ${!canEdit ? 'opacity-50 cursor-not-allowed' : ''}`} 
                             onClick={() => canEdit && formatCode()} 
@@ -895,7 +947,6 @@ const CodeEditor = () => {
                             <option value="hc-black">High Contrast</option>
                         </select>
 
-                        {/* Modified: Language Selection (requires Host) */}
                         <select 
                             className={`lang-select ${!isHost ? 'opacity-50 cursor-not-allowed' : ''}`} 
                             value={files[activeFile]?.language || "java"} 
@@ -921,7 +972,6 @@ const CodeEditor = () => {
                     {Object.keys(files).map((fileName) => (
                         <div key={fileName} className={`file-tab ${activeFile === fileName ? 'active' : ''}`} onClick={() => setActiveFile(fileName)}>
                             <span className="file-tab-name">{fileName}</span>
-                            {/* Modified: File Delete X mark (requires Edit) */}
                             {Object.keys(files).length > 1 && (
                                 <span 
                                     className={`file-tab-close ${!canEdit ? 'opacity-50 cursor-not-allowed' : ''}`} 
@@ -946,7 +996,6 @@ const CodeEditor = () => {
                                 onMount={handleEditorDidMount} 
                                 onChange={handleEditorChange} 
                                 options={{ 
-                                    // --- NEW: Lock down the editor native features if READ_ONLY ---
                                     readOnly: !canEdit,
                                     domReadOnly: !canEdit,
                                     minimap: { enabled: false }, 
@@ -970,9 +1019,10 @@ const CodeEditor = () => {
                                 <span>STDOUT (Output)</span>
                                 <button className="btn btn-secondary" style={{fontSize: '0.7rem', height: '26px', padding: '0 8px'}} onClick={() => setOutput("")}>Clear</button>
                             </div>
-                            <pre className={`terminal-output ${!output ? 'placeholder' : ''}`}>
-                                {output || "// Run code to see output..."}
-                            </pre>
+                            {/* UPDATED: Replaced raw <pre> with a div mapping the formatted output */}
+                            <div className={`terminal-output ${!output ? 'placeholder' : ''}`} style={{ overflowY: 'auto', padding: '10px', height: '100%', backgroundColor: 'var(--bg-dark)' }}>
+                                {renderFormattedOutput(output)}
+                            </div>
                         </div>
                     </div>
                 </Split>
