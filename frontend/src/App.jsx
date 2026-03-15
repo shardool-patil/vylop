@@ -3,6 +3,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import Home from './components/Home';
 import CodeEditor from './components/CodeEditor';
 import Auth from './components/Auth';
+import Dashboard from './components/Dashboard';
 import { Toaster } from 'react-hot-toast';
 import './App.css';
 
@@ -29,6 +30,16 @@ function App() {
             element={
               <ProtectedRoute>
                 <Home />
+              </ProtectedRoute>
+            } 
+          />
+
+          {/* Protected Dashboard Route */}
+          <Route 
+            path="/dashboard" 
+            element={
+              <ProtectedRoute>
+                <Dashboard />
               </ProtectedRoute>
             } 
           />
