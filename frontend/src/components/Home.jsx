@@ -110,8 +110,12 @@ const Home = () => {
 
     const formatDate = (dateString) => {
         if (!dateString) return "Recently";
+        
+        // Append 'Z' to tell JavaScript this time is in UTC, so it converts to your local time
+        const utcDateString = dateString.endsWith('Z') ? dateString : `${dateString}Z`;
+        
         const options = { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' };
-        return new Date(dateString).toLocaleDateString(undefined, options);
+        return new Date(utcDateString).toLocaleDateString(undefined, options);
     };
 
     const copyRoomLink = (id, e) => {
