@@ -12,7 +12,9 @@
   "dependencies": {
     "@monaco-editor/react": "^4.6.0",
     "axios": "^1.7.9",
+    "file-saver": "^2.0.5",
     "framer-motion": "^11.16.0",
+    "jszip": "^3.10.1",
     "lucide-react": "^0.469.0",
     "monaco-vim": "^0.4.1",
     "react": "^18.3.1",

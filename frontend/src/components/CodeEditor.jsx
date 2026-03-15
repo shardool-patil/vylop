@@ -9,6 +9,8 @@ import Split from 'react-split';
 import { initVimMode } from 'monaco-vim';
 import Client from './Client';
 import './CodeEditor.css'; 
+import JSZip from 'jszip';
+import { saveAs } from 'file-saver';
 
 // Production Backend URL
 const API_BASE_URL = 'https://vylop.onrender.com';
@@ -617,18 +619,28 @@ const CodeEditor = () => {
         }
     };
 
-    const downloadCode = () => {
-        const file = files[activeFile];
-        const blob = new Blob([file.value], { type: "text/plain" });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = file.name;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-        toast.success(`${file.name} Downloaded!`);
+    const downloadWorkspace = async () => {
+        try {
+            const zip = new JSZip();
+            
+            // Loop through all files in the editor state and add them to the ZIP
+            Object.keys(files).forEach(fileName => {
+                zip.file(fileName, files[fileName].value);
+            });
+
+            // Generate the ZIP file
+            const content = await zip.generateAsync({ type: "blob" });
+            
+            // Format the room name for the file name (e.g., "Dev Workspace" -> "Dev_Workspace")
+            const safeRoomName = roomName.replace(/[^a-zA-Z0-9]/g, '_');
+            
+            // Trigger the download
+            saveAs(content, `${safeRoomName}_vylop.zip`);
+            toast.success("Workspace Exported! 📦");
+        } catch (error) {
+            console.error("ZIP Generation Error:", error);
+            toast.error("Failed to export workspace");
+        }
     };
 
     const copyRoomLink = () => {
@@ -916,7 +928,7 @@ const CodeEditor = () => {
                             {isSaving ? <svg className="spinner" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M12 2v4m0 12v4M4.93 4.93l2.83 2.83m8.48 8.48l2.83 2.83M2 12h4m12 0h4M4.93 19.07l2.83-2.83m8.48-8.48l2.83-2.83" /></svg> : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>}
                         </button>
 
-                        <button className="btn btn-secondary btn-icon" onClick={downloadCode} title="Download File">
+                        <button className="btn btn-secondary btn-icon" onClick={downloadWorkspace} title="Export Workspace as .zip">
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
                         </button>
 
