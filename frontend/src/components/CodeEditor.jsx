@@ -7,10 +7,11 @@ import axios from 'axios';
 import toast from 'react-hot-toast';
 import Split from 'react-split';
 import { initVimMode } from 'monaco-vim';
-import Client from './Client';
-import './CodeEditor.css'; 
 import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
+import ReactMarkdown from 'react-markdown'; // NEW: Markdown parser
+import Client from './Client';
+import './CodeEditor.css'; 
 
 // Production Backend URL
 const API_BASE_URL = 'https://vylop.onrender.com';
@@ -25,17 +26,18 @@ const CODE_SNIPPETS = {
     javascript: `// Welcome to Vylop!\n\nconsole.log("Hello, World!");`,
     typescript: `// Welcome to Vylop!\n\nconst greeting: string = "Hello, World!";\nconsole.log(greeting);`,
     go: `// Welcome to Vylop!\n\npackage main\n\nimport "fmt"\n\nfunc main() {\n    fmt.Println("Hello, World!")\n}`,
-    rust: `// Welcome to Vylop!\n\nfn main() {\n    println!("Hello, World!");\n}`
+    rust: `// Welcome to Vylop!\n\nfn main() {\n    println!("Hello, World!");\n}`,
+    markdown: `# Welcome to Vylop!\n\nStart writing your markdown here...\n\n- Real-time collaboration\n- Live preview\n- Awesome features` // NEW: Markdown snippet
 };
 
 const getExtension = (lang) => {
-    const map = { java: 'java', python: 'py', cpp: 'cpp', javascript: 'js', typescript: 'ts', go: 'go', rust: 'rs' };
+    const map = { java: 'java', python: 'py', cpp: 'cpp', javascript: 'js', typescript: 'ts', go: 'go', rust: 'rs', markdown: 'md' };
     return map[lang] || 'txt';
 };
 
 const getLanguageFromExtension = (fileName) => {
     const ext = fileName.split('.').pop();
-    const map = { java: 'java', py: 'python', cpp: 'cpp', js: 'javascript', ts: 'typescript', go: 'go', rs: 'rust' };
+    const map = { java: 'java', py: 'python', cpp: 'cpp', js: 'javascript', ts: 'typescript', go: 'go', rs: 'rust', md: 'markdown' };
     return map[ext] || 'plaintext';
 };
 
@@ -69,6 +71,7 @@ const CodeEditor = () => {
 
     const [isSidebarOpen, setIsSidebarOpen] = useState(true);
     const [isVimMode, setIsVimMode] = useState(false);
+    const [showMarkdownPreview, setShowMarkdownPreview] = useState(false); // NEW: Markdown preview state
     const [messages, setMessages] = useState([]);
     const [chatMsg, setChatMsg] = useState("");
     const [typingUsers, setTypingUsers] = useState([]);
@@ -376,7 +379,6 @@ const CodeEditor = () => {
                 client.subscribe(`/topic/users/${roomId}`, (msg) => {
                     const body = JSON.parse(msg.body);
                     
-                    // Handle KICK event
                     if (body.type === 'KICK') {
                         if (body.username === username) {
                             toast.error("You have been kicked from the room by the host.", { icon: '🥾', duration: 5000 });
@@ -386,7 +388,6 @@ const CodeEditor = () => {
                             toast(`${body.username} was kicked by the host.`);
                         }
                     } else if (body.username !== username) {
-                        // Regular notifications
                         const toastKey = `${body.type}-${body.username}`;
                         if (!notifiedUsers.current.has(toastKey)) {
                             if (body.type === "JOIN") toast.success(`${body.username} joined`);
@@ -622,19 +623,11 @@ const CodeEditor = () => {
     const downloadWorkspace = async () => {
         try {
             const zip = new JSZip();
-            
-            // Loop through all files in the editor state and add them to the ZIP
             Object.keys(files).forEach(fileName => {
                 zip.file(fileName, files[fileName].value);
             });
-
-            // Generate the ZIP file
             const content = await zip.generateAsync({ type: "blob" });
-            
-            // Format the room name for the file name (e.g., "Dev Workspace" -> "Dev_Workspace")
             const safeRoomName = roomName.replace(/[^a-zA-Z0-9]/g, '_');
-            
-            // Trigger the download
             saveAs(content, `${safeRoomName}_vylop.zip`);
             toast.success("Workspace Exported! 📦");
         } catch (error) {
@@ -649,13 +642,11 @@ const CodeEditor = () => {
         toast.success("Invite Link Copied!", { icon: '🔗' });
     };
 
-    // --- NEW: MONACO CURSOR JUMP LOGIC ---
     const handleJumpToLine = (fileName, lineNumber) => {
         if (files[fileName]) {
             if (activeFile !== fileName) {
                 setActiveFile(fileName);
             }
-            // Add a tiny delay to let Monaco switch tabs if necessary before scrolling
             setTimeout(() => {
                 if (editorRef.current) {
                     editorRef.current.revealLineInCenter(lineNumber);
@@ -668,20 +659,16 @@ const CodeEditor = () => {
         }
     };
 
-    // --- NEW: OUTPUT PARSER & FORMATTER ---
     const renderFormattedOutput = (text) => {
         if (!text) return "// Run code to see output...";
 
         const lines = text.split('\n');
 
         return lines.map((line, index) => {
-            // Heuristic to detect error lines
             const isError = /(error|exception|traceback|failed|at\s+[\w.]+\.)/i.test(line);
             const style = isError ? { color: '#ff6b6b' } : { color: '#e1e4e8' };
 
-            // Look for Java/C++ stack trace: "Main.java:5"
             const match1 = line.match(/([a-zA-Z0-9_-]+\.[a-zA-Z0-9]+):(\d+)/);
-            // Look for Python stack trace: 'File "script.py", line 12'
             const match2 = line.match(/File "([^"]+)", line (\d+)/);
 
             let match = match1 || match2;
@@ -737,6 +724,7 @@ const CodeEditor = () => {
                                 <option value="typescript">TypeScript</option>
                                 <option value="go">Go</option>
                                 <option value="rust">Rust</option>
+                                <option value="markdown">Markdown</option> {/* NEW */}
                             </select>
                         </div>
                         <div className="modal-field">
@@ -910,6 +898,18 @@ const CodeEditor = () => {
                     </div>
                     
                     <div className="toolbar-group right-controls">
+                        {/* NEW: Markdown Preview Toggle Button (Only shows if active file is .md) */}
+                        {files[activeFile]?.language === "markdown" && (
+                            <button 
+                                className={`btn btn-icon ${showMarkdownPreview ? 'btn-primary' : 'btn-secondary'}`} 
+                                onClick={() => setShowMarkdownPreview(!showMarkdownPreview)} 
+                                title="Toggle Markdown Preview"
+                                style={{marginRight: '10px'}}
+                            >
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+                            </button>
+                        )}
+
                         <button 
                             className={`btn btn-secondary btn-icon ${!canEdit ? 'opacity-50 cursor-not-allowed' : ''}`} 
                             onClick={() => canEdit && setIsModalOpen(true)} 
@@ -969,6 +969,7 @@ const CodeEditor = () => {
                             <option value="typescript">TypeScript</option>
                             <option value="go">Go</option>
                             <option value="rust">Rust</option>
+                            <option value="markdown">Markdown</option>
                         </select>
                         <button className="btn btn-primary btn-icon" onClick={runCode} disabled={isRunning} title="Run Code">
                             {isRunning ? <svg className="spinner" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M12 2v4m0 12v4M4.93 4.93l2.83 2.83m8.48 8.48l2.83 2.83M2 12h4m12 0h4M4.93 19.07l2.83-2.83m8.48-8.48l2.83-2.83" /></svg> : <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>}
@@ -995,25 +996,53 @@ const CodeEditor = () => {
 
                 <Split className={`editor-split ${splitDirection}`} sizes={[70, 30]} minSize={250} gutterSize={8} direction={splitDirection}>
                     <div className="editor-wrapper">
-                        <div style={{ flex: 1, minHeight: 0 }}>
-                            <Editor 
-                                height="100%" 
-                                language={files[activeFile]?.language === "cpp" ? "cpp" : files[activeFile]?.language} 
-                                theme={editorTheme}
-                                value={files[activeFile]?.value || ""} 
-                                onMount={handleEditorDidMount} 
-                                onChange={handleEditorChange} 
-                                options={{ 
-                                    readOnly: !canEdit,
-                                    domReadOnly: !canEdit,
-                                    minimap: { enabled: false }, 
-                                    fontSize: 14, 
-                                    fontFamily: 'JetBrains Mono', 
-                                    automaticLayout: true, 
-                                    formatOnPaste: true 
-                                }} 
-                            />
-                        </div>
+                        {/* NEW: Markdown Split View Logic */}
+                        {showMarkdownPreview && files[activeFile]?.language === "markdown" ? (
+                            <Split className="markdown-split" sizes={[50, 50]} minSize={100} gutterSize={8} direction="horizontal" style={{ display: 'flex', height: '100%' }}>
+                                <div style={{ height: '100%' }}>
+                                    <Editor 
+                                        height="100%" 
+                                        language="markdown" 
+                                        theme={editorTheme}
+                                        value={files[activeFile]?.value || ""} 
+                                        onMount={handleEditorDidMount} 
+                                        onChange={handleEditorChange} 
+                                        options={{ 
+                                            readOnly: !canEdit,
+                                            domReadOnly: !canEdit,
+                                            minimap: { enabled: false }, 
+                                            fontSize: 14, 
+                                            fontFamily: 'JetBrains Mono', 
+                                            automaticLayout: true,
+                                            wordWrap: 'on' 
+                                        }} 
+                                    />
+                                </div>
+                                <div className="markdown-preview" style={{ height: '100%', overflowY: 'auto', padding: '20px', backgroundColor: 'var(--bg-dark)', color: 'var(--text-main)' }}>
+                                    <ReactMarkdown>{files[activeFile]?.value || ""}</ReactMarkdown>
+                                </div>
+                            </Split>
+                        ) : (
+                            <div style={{ flex: 1, minHeight: 0, height: '100%' }}>
+                                <Editor 
+                                    height="100%" 
+                                    language={files[activeFile]?.language === "cpp" ? "cpp" : files[activeFile]?.language} 
+                                    theme={editorTheme}
+                                    value={files[activeFile]?.value || ""} 
+                                    onMount={handleEditorDidMount} 
+                                    onChange={handleEditorChange} 
+                                    options={{ 
+                                        readOnly: !canEdit,
+                                        domReadOnly: !canEdit,
+                                        minimap: { enabled: false }, 
+                                        fontSize: 14, 
+                                        fontFamily: 'JetBrains Mono', 
+                                        automaticLayout: true, 
+                                        formatOnPaste: true 
+                                    }} 
+                                />
+                            </div>
+                        )}
                         <div id="vim-status-bar" className="vim-status-bar"></div>
                     </div>
                     
