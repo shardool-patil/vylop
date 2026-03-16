@@ -9,8 +9,9 @@ import Split from 'react-split';
 import { initVimMode } from 'monaco-vim';
 import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
-import ReactMarkdown from 'react-markdown'; // NEW: Markdown parser
+import ReactMarkdown from 'react-markdown'; 
 import Client from './Client';
+import FileExplorer from './FileExplorer'; // NEW: Import the File Explorer
 import './CodeEditor.css'; 
 
 // Production Backend URL
@@ -27,7 +28,7 @@ const CODE_SNIPPETS = {
     typescript: `// Welcome to Vylop!\n\nconst greeting: string = "Hello, World!";\nconsole.log(greeting);`,
     go: `// Welcome to Vylop!\n\npackage main\n\nimport "fmt"\n\nfunc main() {\n    fmt.Println("Hello, World!")\n}`,
     rust: `// Welcome to Vylop!\n\nfn main() {\n    println!("Hello, World!");\n}`,
-    markdown: `# Welcome to Vylop!\n\nStart writing your markdown here...\n\n- Real-time collaboration\n- Live preview\n- Awesome features` // NEW: Markdown snippet
+    markdown: `# Welcome to Vylop!\n\nStart writing your markdown here...\n\n- Real-time collaboration\n- Live preview\n- Awesome features` 
 };
 
 const getExtension = (lang) => {
@@ -57,9 +58,9 @@ const CodeEditor = () => {
     });
 
     const [files, setFiles] = useState({
-        "Main.java": { name: "Main.java", language: "java", value: CODE_SNIPPETS["java"] }
+        "src/Main.java": { name: "src/Main.java", language: "java", value: CODE_SNIPPETS["java"] }
     });
-    const [activeFile, setActiveFile] = useState("Main.java");
+    const [activeFile, setActiveFile] = useState("src/Main.java");
     
     const [output, setOutput] = useState("");
     const [userInput, setUserInput] = useState(""); 
@@ -71,7 +72,7 @@ const CodeEditor = () => {
 
     const [isSidebarOpen, setIsSidebarOpen] = useState(true);
     const [isVimMode, setIsVimMode] = useState(false);
-    const [showMarkdownPreview, setShowMarkdownPreview] = useState(false); // NEW: Markdown preview state
+    const [showMarkdownPreview, setShowMarkdownPreview] = useState(false); 
     const [messages, setMessages] = useState([]);
     const [chatMsg, setChatMsg] = useState("");
     const [typingUsers, setTypingUsers] = useState([]);
@@ -303,7 +304,6 @@ const CodeEditor = () => {
         toast(`Theme set to ${e.target.value}`, { icon: '🎨' });
     };
 
-    // --- HOST CONTROLS ---
     const changeUserRole = (targetUser, newRole) => {
         if (stompClient.current?.connected && isHost) {
             stompClient.current.send(`/app/room/${roomId}/roleChange`, {}, JSON.stringify({
@@ -320,7 +320,6 @@ const CodeEditor = () => {
             }));
         }
     };
-    // -----------------------
 
     useEffect(() => {
         if (!username) return;
@@ -713,7 +712,7 @@ const CodeEditor = () => {
                                 onChange={(e) => {
                                     setNewFileLang(e.target.value);
                                     if (!newFileName || newFileName.includes('.')) {
-                                        setNewFileName(`NewFile.${getExtension(e.target.value)}`);
+                                        setNewFileName(`src/NewFile.${getExtension(e.target.value)}`);
                                     }
                                 }}
                             >
@@ -724,17 +723,17 @@ const CodeEditor = () => {
                                 <option value="typescript">TypeScript</option>
                                 <option value="go">Go</option>
                                 <option value="rust">Rust</option>
-                                <option value="markdown">Markdown</option> {/* NEW */}
+                                <option value="markdown">Markdown</option>
                             </select>
                         </div>
                         <div className="modal-field">
-                            <label>File Name</label>
+                            <label>File Name (Use slashes for folders)</label>
                             <input 
                                 type="text" 
                                 className="modal-input modern-input"
                                 value={newFileName} 
                                 onChange={(e) => setNewFileName(e.target.value)} 
-                                placeholder={`e.g. script.${getExtension(newFileLang)}`}
+                                placeholder={`e.g. src/utils/script.${getExtension(newFileLang)}`}
                                 onKeyDown={(e) => e.key === 'Enter' && handleCreateNewFile()}
                                 autoFocus
                             />
@@ -773,7 +772,12 @@ const CodeEditor = () => {
                     </button>
                 </div>
 
-                <div className="user-list">
+                {/* NEW: Nested File Explorer Component inserted here */}
+                <div className="sidebar-section" style={{ flex: '1 1 auto', overflowY: 'auto', borderBottom: '1px solid var(--border)' }}>
+                    <FileExplorer files={files} activeFile={activeFile} onFileClick={setActiveFile} />
+                </div>
+
+                <div className="user-list" style={{ flex: '0 0 auto' }}>
                     <div className="section-title">
                         Online ({users.length})
                         <span className={`status-dot ${wsConnected ? 'connected' : 'disconnected'}`}></span>
@@ -860,7 +864,7 @@ const CodeEditor = () => {
                     </div>
                 </div>
 
-                <div className="chat-area">
+                <div className="chat-area" style={{ flex: '0 0 auto', maxHeight: '30%' }}>
                     <div className="chat-messages" ref={chatContainerRef}>
                         {messages.map((msg, i) => (
                             <div key={i} className={`message ${msg.sender === username ? 'self' : 'other'}`}>
@@ -898,7 +902,6 @@ const CodeEditor = () => {
                     </div>
                     
                     <div className="toolbar-group right-controls">
-                        {/* NEW: Markdown Preview Toggle Button (Only shows if active file is .md) */}
                         {files[activeFile]?.language === "markdown" && (
                             <button 
                                 className={`btn btn-icon ${showMarkdownPreview ? 'btn-primary' : 'btn-secondary'}`} 
@@ -980,7 +983,7 @@ const CodeEditor = () => {
                 <div className="file-tabs">
                     {Object.keys(files).map((fileName) => (
                         <div key={fileName} className={`file-tab ${activeFile === fileName ? 'active' : ''}`} onClick={() => setActiveFile(fileName)}>
-                            <span className="file-tab-name">{fileName}</span>
+                            <span className="file-tab-name">{fileName.split('/').pop()}</span>
                             {Object.keys(files).length > 1 && (
                                 <span 
                                     className={`file-tab-close ${!canEdit ? 'opacity-50 cursor-not-allowed' : ''}`} 
@@ -996,7 +999,6 @@ const CodeEditor = () => {
 
                 <Split className={`editor-split ${splitDirection}`} sizes={[70, 30]} minSize={250} gutterSize={8} direction={splitDirection}>
                     <div className="editor-wrapper">
-                        {/* NEW: Markdown Split View Logic */}
                         {showMarkdownPreview && files[activeFile]?.language === "markdown" ? (
                             <Split className="markdown-split" sizes={[50, 50]} minSize={100} gutterSize={8} direction="horizontal" style={{ display: 'flex', height: '100%' }}>
                                 <div style={{ height: '100%' }}>
