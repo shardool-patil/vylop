@@ -96,7 +96,7 @@ const FileExplorer = ({ files, activeFile, onFileClick }) => {
 
     return (
         <div className="file-explorer-container">
-            {/* The duplicate header was removed from right here! */}
+            {/* The duplicate <div className="explorer-header">EXPLORER</div> has been completely removed from here! */}
             <div className="file-tree">
                 {Object.values(fileTree).map(node => (
                     <FileNode
