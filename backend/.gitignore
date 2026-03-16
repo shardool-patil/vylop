@@ -1,0 +1,38 @@
+target/
+!.mvn/wrapper/maven-wrapper.jar
+/target/
+*.class
+*.mars
+*.db
+*.log
+
+# Mobile Tools for Java (J2ME)
+.mtj.tmp/
+
+# Package Files #
+*.jar
+*.war
+*.ear
+*.zip
+*.tar.gz
+*.rar
+
+# virtual machine crash logs, see http://www.oracle.com/technetwork/java/javase/community/wlennon-121557.html#gclog
+hs_err_pid*
+
+# Sensitive Files
+.env
+client_secret.json
+
+# IDE specific files
+.settings/
+.classpath
+.project
+.factorypath
+.idea/
+*.iml
+*.iws
+.vscode/
+bin/
+
+HELP.md
