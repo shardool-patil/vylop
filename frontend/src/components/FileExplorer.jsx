@@ -5,7 +5,6 @@ import { SiCplusplus, SiTypescript, SiRust } from "react-icons/si";
 import { FiFile } from "react-icons/fi";
 import './FileExplorer.css';
 
-// Export this so we can reuse it in the CodeEditor tabs!
 export const getFileIcon = (fileName) => {
     const ext = fileName.split('.').pop().toLowerCase();
     switch(ext) {
@@ -97,7 +96,7 @@ const FileExplorer = ({ files, activeFile, onFileClick }) => {
 
     return (
         <div className="file-explorer-container">
-            <div className="explorer-header">EXPLORER</div>
+            {/* The duplicate header was removed from right here! */}
             <div className="file-tree">
                 {Object.values(fileTree).map(node => (
                     <FileNode
