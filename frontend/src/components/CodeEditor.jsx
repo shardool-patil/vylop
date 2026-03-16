@@ -811,11 +811,6 @@ const CodeEditor = () => {
                     </button>
                 </div>
 
-                {/* --- NEW: Main Sidebar Title --- */}
-                <div style={{ padding: '12px 15px 4px', fontSize: '0.7rem', color: '#8b949e', letterSpacing: '1px' }}>
-                    EXPLORER
-                </div>
-
                 {/* --- Collapsible File Structure Section --- */}
                 <div className="sidebar-section" style={{ display: 'flex', flexDirection: 'column', flex: isExplorerExpanded ? '1 1 auto' : '0 0 auto', borderBottom: '1px solid var(--border)' }}>
                     <div 
