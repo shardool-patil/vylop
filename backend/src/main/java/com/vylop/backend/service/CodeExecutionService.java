@@ -54,7 +54,7 @@ public class CodeExecutionService {
             List<Map<String, String>> extraFiles = new ArrayList<>();
             boolean hasEnv = envVars != null && !envVars.isEmpty();
 
-            // --- NEW: Universal Fallback - Create a physical .env file in the sandbox ---
+            // --- Universal Fallback - Create a physical .env file in the sandbox ---
             if (hasEnv) {
                 StringBuilder dotenv = new StringBuilder();
                 for (Map.Entry<String, String> env : envVars.entrySet()) {
@@ -66,7 +66,7 @@ public class CodeExecutionService {
                 extraFiles.add(envFileObj);
             }
 
-            // --- NEW: Seamless Dynamic Environment Injection ---
+            // --- Seamless Dynamic Environment Injection ---
             if (hasEnv) {
                 if (language.equalsIgnoreCase("python")) {
                     StringBuilder pyEnv = new StringBuilder("import os\n");
@@ -124,39 +124,20 @@ public class CodeExecutionService {
                 }
             }
 
-            // 2. The Bulletproof Java Delegator Workaround
+            // 2. The Bulletproof Java Static Block Injection
             if (language.equalsIgnoreCase("java")) {
-                String actualClassName = "Main"; 
-                Pattern pattern = Pattern.compile("public\\s+class\\s+([a-zA-Z0-9_]+)");
-                Matcher matcher = pattern.matcher(code);
-                
-                if (matcher.find()) {
-                    actualClassName = matcher.group(1);
-                } else {
-                    Pattern fallbackPattern = Pattern.compile("class\\s+([a-zA-Z0-9_]+)");
-                    Matcher fallbackMatcher = fallbackPattern.matcher(code);
-                    if (fallbackMatcher.find()) {
-                        actualClassName = fallbackMatcher.group(1);
-                    }
-                }
-                
-                // Inject Java properties as fallback since Java's System.getenv() is strictly read-only
-                StringBuilder javaEnv = new StringBuilder();
                 if (hasEnv) {
+                    StringBuilder javaEnv = new StringBuilder("static { ");
                     for (Map.Entry<String, String> env : envVars.entrySet()) {
                         javaEnv.append("System.setProperty(\"").append(env.getKey()).append("\", \"")
                                .append(env.getValue().replace("\"", "\\\"")).append("\"); ");
                     }
+                    javaEnv.append("} ");
+                    
+                    // Regex inserts the static block right after 'class ClassName {'
+                    code = code.replaceFirst("(class\\s+[a-zA-Z0-9_]+\\s*\\{)", "$1 " + javaEnv.toString());
                 }
-
-                String delegatorCode = "public class prog { public static void main(String[] args) throws Exception { " + 
-                                       javaEnv.toString() + actualClassName + ".main(args); } }";
-                requestBody.put("code", delegatorCode);
-                
-                Map<String, String> mainFileObj = new HashMap<>();
-                mainFileObj.put("file", actualClassName + ".java");
-                mainFileObj.put("code", code);
-                extraFiles.add(mainFileObj);
+                requestBody.put("code", code);
             } else {
                 requestBody.put("code", code);
             }
