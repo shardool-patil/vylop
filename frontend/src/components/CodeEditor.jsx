@@ -21,9 +21,9 @@ const loadedRooms = new Set();
 
 const CODE_SNIPPETS = {
     java: `// Welcome to Vylop!\n\npublic class Main {\n    public static void main(String[] args) {\n        System.out.println("Hello, World!");\n    }\n}`,
-    python: `# Welcome to Vylop!\n\ndef main():\n    print("Hello, World!")\n\nif __name__ == "__main__":\n    main()`,
+    python: `# Welcome to Vylop!\nimport os\n\ndef main():\n    api_key = os.environ.get("MY_SECRET_KEY")\n    print(f"My secret is: {api_key}")\n\nif __name__ == "__main__":\n    main()`,
     cpp: `// Welcome to Vylop!\n\n#include <iostream>\nusing namespace std;\n\nint main() {\n    cout << "Hello, World!" << endl;\n    return 0;\n}`,
-    javascript: `// Welcome to Vylop!\n\nconsole.log("Hello, World!");`,
+    javascript: `// Welcome to Vylop!\n\nconsole.log("Secret:", process.env.MY_SECRET_KEY);`,
     typescript: `// Welcome to Vylop!\n\nconst greeting: string = "Hello, World!";\nconsole.log(greeting);`,
     go: `// Welcome to Vylop!\n\npackage main\n\nimport "fmt"\n\nfunc main() {\n    fmt.Println("Hello, World!")\n}`,
     rust: `// Welcome to Vylop!\n\nfn main() {\n    println!("Hello, World!");\n}`,
@@ -87,6 +87,10 @@ const CodeEditor = () => {
 
     const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
     const [fileToDelete, setFileToDelete] = useState(null);
+
+    // --- NEW: Secrets Management State ---
+    const [isSecretsModalOpen, setIsSecretsModalOpen] = useState(false);
+    const [secrets, setSecrets] = useState([{ key: '', value: '' }]);
 
     const editorRef = useRef(null);
     const monacoRef = useRef(null);
@@ -611,12 +615,21 @@ const CodeEditor = () => {
             const fileData = {};
             Object.keys(files).forEach(key => { fileData[key] = files[key].value; });
 
+            // --- NEW: Convert secrets array to key-value object for backend payload ---
+            const envVarsPayload = secrets.reduce((acc, curr) => {
+                if (curr.key.trim() && curr.value.trim()) {
+                    acc[curr.key.trim()] = curr.value.trim();
+                }
+                return acc;
+            }, {});
+
             const response = await axios.post(`${API_BASE_URL}/api/execute`, { 
                 language: files[activeFile].language, 
                 code: files[activeFile].value, 
                 input: userInput,
                 mainFile: activeFile,
-                files: fileData 
+                files: fileData,
+                envVars: envVarsPayload // Send the mapped secrets!
             });
             setOutput(response.data); 
         } catch (error) { setOutput("Execution failed."); }
@@ -737,6 +750,83 @@ const CodeEditor = () => {
 
     return (
         <div className="app-container">
+            
+            {/* --- NEW: Secrets Management Modal --- */}
+            {isSecretsModalOpen && (
+                <div className="modal-overlay">
+                    <div className="custom-modal" style={{ width: '450px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
+                            <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+                                Environment Secrets
+                            </h3>
+                            <button className="btn btn-icon" onClick={() => setIsSecretsModalOpen(false)} style={{ background: 'transparent', color: 'var(--text-muted)' }}>&times;</button>
+                        </div>
+                        <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '20px', lineHeight: '1.4' }}>
+                            Add environment variables (like API keys) here. They will be securely injected when you run your code and won't be saved in your files.
+                        </p>
+
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '250px', overflowY: 'auto', marginBottom: '15px', paddingRight: '5px' }}>
+                            {secrets.map((secret, index) => (
+                                <div key={index} style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                                    <input
+                                        type="text"
+                                        className="modal-input modern-input"
+                                        placeholder="KEY (e.g. OPENAI_API_KEY)"
+                                        value={secret.key}
+                                        onChange={(e) => {
+                                            const newSecrets = [...secrets];
+                                            newSecrets[index].key = e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, '');
+                                            setSecrets(newSecrets);
+                                        }}
+                                        style={{ flex: 1, textTransform: 'uppercase', fontSize: '0.85rem' }}
+                                    />
+                                    <input
+                                        type="password"
+                                        className="modal-input modern-input"
+                                        placeholder="VALUE"
+                                        value={secret.value}
+                                        onChange={(e) => {
+                                            const newSecrets = [...secrets];
+                                            newSecrets[index].value = e.target.value;
+                                            setSecrets(newSecrets);
+                                        }}
+                                        style={{ flex: 1, fontSize: '0.85rem' }}
+                                    />
+                                    <button
+                                        className="btn btn-icon"
+                                        onClick={() => {
+                                            const newSecrets = secrets.filter((_, i) => i !== index);
+                                            setSecrets(newSecrets.length ? newSecrets : [{ key: '', value: '' }]);
+                                        }}
+                                        style={{ color: '#ff6b6b', background: 'transparent', padding: '4px' }}
+                                        title="Remove Secret"
+                                    >
+                                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                                    </button>
+                                </div>
+                            ))}
+                        </div>
+
+                        <button
+                            className="btn btn-secondary"
+                            onClick={() => setSecrets([...secrets, { key: '', value: '' }])}
+                            style={{ width: '100%', marginBottom: '20px', padding: '8px', fontSize: '0.85rem' }}
+                        >
+                            + Add Variable
+                        </button>
+
+                        <div className="modal-actions">
+                            <button className="btn btn-secondary" onClick={() => setIsSecretsModalOpen(false)}>Cancel</button>
+                            <button className="btn btn-primary" onClick={() => {
+                                toast.success("Secrets ready for execution!", { icon: '🔒' });
+                                setIsSecretsModalOpen(false);
+                            }}>Done</button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {isModalOpen && (
                 <div className="modal-overlay">
                     <div className="custom-modal">
@@ -849,7 +939,7 @@ const CodeEditor = () => {
                             <span className={`status-dot ${wsConnected ? 'connected' : 'disconnected'}`}></span>
                         </div>
                         {isOnlineExpanded && (
-                            <div className="users-container" style={{ overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: '8px', padding: '10px 15px' }}>
+                            <div className="users-container" style={{ overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px', padding: '10px 15px' }}>
                                 {users.map((u, i) => (
                                     <div key={i} style={{ 
                                         backgroundColor: 'rgba(255, 255, 255, 0.03)', 
@@ -962,6 +1052,16 @@ const CodeEditor = () => {
                             disabled={!canEdit}
                         >
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="12" y1="18" x2="12" y2="12"></line><line x1="9" y1="15" x2="15" y2="15"></line></svg>
+                        </button>
+
+                        {/* --- NEW: Secrets Modal Button --- */}
+                        <button 
+                            className={`btn btn-secondary btn-icon ${!canEdit ? 'opacity-50 cursor-not-allowed' : ''}`} 
+                            onClick={() => canEdit && setIsSecretsModalOpen(true)} 
+                            title={!canEdit ? getTooltip('EDITOR') : "Environment Secrets"}
+                            disabled={!canEdit}
+                        >
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
                         </button>
 
                         <button 
