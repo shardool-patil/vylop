@@ -37,7 +37,7 @@ public class CodeExecutionService {
         this.springJsonParser = JsonParserFactory.getJsonParser();
     }
 
-    public String executeCode(String language, String code, String input, String mainFileName, Map<String, String> files) {
+    public String executeCode(String language, String code, String input, String mainFileName, Map<String, String> files, Map<String, String> envVars) {
         try {
             String compiler = getDynamicCompilerName(language);
             if (compiler == null) {
@@ -51,8 +51,67 @@ public class CodeExecutionService {
                 requestBody.put("stdin", input);
             }
 
-            // 1. Filter out workspace pollution
             List<Map<String, String>> extraFiles = new ArrayList<>();
+            boolean hasEnv = envVars != null && !envVars.isEmpty();
+
+            // --- NEW: Universal Fallback - Create a physical .env file in the sandbox ---
+            if (hasEnv) {
+                StringBuilder dotenv = new StringBuilder();
+                for (Map.Entry<String, String> env : envVars.entrySet()) {
+                    dotenv.append(env.getKey()).append("=").append(env.getValue()).append("\n");
+                }
+                Map<String, String> envFileObj = new HashMap<>();
+                envFileObj.put("file", ".env");
+                envFileObj.put("code", dotenv.toString());
+                extraFiles.add(envFileObj);
+            }
+
+            // --- NEW: Seamless Dynamic Environment Injection ---
+            if (hasEnv) {
+                if (language.equalsIgnoreCase("python")) {
+                    StringBuilder pyEnv = new StringBuilder("import os\n");
+                    for (Map.Entry<String, String> env : envVars.entrySet()) {
+                        pyEnv.append("os.environ['").append(env.getKey()).append("'] = '")
+                             .append(env.getValue().replace("'", "\\'")).append("'\n");
+                    }
+                    code = pyEnv.toString() + code;
+                } 
+                else if (language.equalsIgnoreCase("javascript") || language.equalsIgnoreCase("typescript")) {
+                    StringBuilder jsEnv = new StringBuilder();
+                    for (Map.Entry<String, String> env : envVars.entrySet()) {
+                        jsEnv.append("process.env['").append(env.getKey()).append("'] = '")
+                             .append(env.getValue().replace("'", "\\'")).append("';\n");
+                    }
+                    code = jsEnv.toString() + code;
+                }
+                else if (language.equalsIgnoreCase("go")) {
+                    StringBuilder goEnv = new StringBuilder("package main\nimport \"os\"\nfunc init() {\n");
+                    for (Map.Entry<String, String> env : envVars.entrySet()) {
+                        goEnv.append("    os.Setenv(\"").append(env.getKey()).append("\", \"")
+                             .append(env.getValue().replace("\"", "\\\"")).append("\")\n");
+                    }
+                    goEnv.append("}\n");
+                    Map<String, String> envFileObj = new HashMap<>();
+                    envFileObj.put("file", "vylop_env_injector.go");
+                    envFileObj.put("code", goEnv.toString());
+                    extraFiles.add(envFileObj);
+                }
+                else if (language.equalsIgnoreCase("c") || language.equalsIgnoreCase("cpp") || language.equalsIgnoreCase("c++")) {
+                    StringBuilder cppEnv = new StringBuilder("#include <stdlib.h>\n__attribute__((constructor)) static void _vylop_set_env() {\n");
+                    for (Map.Entry<String, String> env : envVars.entrySet()) {
+                        cppEnv.append("    setenv(\"").append(env.getKey()).append("\", \"")
+                              .append(env.getValue().replace("\"", "\\\"")).append("\", 1);\n");
+                    }
+                    cppEnv.append("}\n");
+                    Map<String, String> envFileObj = new HashMap<>();
+                    String ext = language.equalsIgnoreCase("c") ? ".c" : ".cpp";
+                    envFileObj.put("file", "vylop_env_injector" + ext);
+                    envFileObj.put("code", cppEnv.toString());
+                    extraFiles.add(envFileObj);
+                }
+            }
+
+            // 1. Filter out workspace pollution
             if (files != null && !files.isEmpty()) {
                 for (Map.Entry<String, String> entry : files.entrySet()) {
                     String fName = entry.getKey();
@@ -67,15 +126,13 @@ public class CodeExecutionService {
 
             // 2. The Bulletproof Java Delegator Workaround
             if (language.equalsIgnoreCase("java")) {
-                // Scan the code to dynamically find the actual class name
-                String actualClassName = "Main"; // Default fallback
+                String actualClassName = "Main"; 
                 Pattern pattern = Pattern.compile("public\\s+class\\s+([a-zA-Z0-9_]+)");
                 Matcher matcher = pattern.matcher(code);
                 
                 if (matcher.find()) {
                     actualClassName = matcher.group(1);
                 } else {
-                    // Fallback: If they didn't write "public class", just look for "class"
                     Pattern fallbackPattern = Pattern.compile("class\\s+([a-zA-Z0-9_]+)");
                     Matcher fallbackMatcher = fallbackPattern.matcher(code);
                     if (fallbackMatcher.find()) {
@@ -83,11 +140,19 @@ public class CodeExecutionService {
                     }
                 }
                 
-                // Build the delegator to target the exact class name the user wrote
-                String delegatorCode = "public class prog { public static void main(String[] args) throws Exception { " + actualClassName + ".main(args); } }";
+                // Inject Java properties as fallback since Java's System.getenv() is strictly read-only
+                StringBuilder javaEnv = new StringBuilder();
+                if (hasEnv) {
+                    for (Map.Entry<String, String> env : envVars.entrySet()) {
+                        javaEnv.append("System.setProperty(\"").append(env.getKey()).append("\", \"")
+                               .append(env.getValue().replace("\"", "\\\"")).append("\"); ");
+                    }
+                }
+
+                String delegatorCode = "public class prog { public static void main(String[] args) throws Exception { " + 
+                                       javaEnv.toString() + actualClassName + ".main(args); } }";
                 requestBody.put("code", delegatorCode);
                 
-                // Push the user's code to Wandbox using the exact required file name
                 Map<String, String> mainFileObj = new HashMap<>();
                 mainFileObj.put("file", actualClassName + ".java");
                 mainFileObj.put("code", code);

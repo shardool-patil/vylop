@@ -52,9 +52,13 @@ public class CodeExecutionController {
         
         @SuppressWarnings("unchecked")
         Map<String, String> files = (Map<String, String>) payload.get("files");
+
+        // --- NEW: Extract Environment Secrets ---
+        @SuppressWarnings("unchecked")
+        Map<String, String> envVars = (Map<String, String>) payload.get("envVars");
         
         // 3. Execute securely via Cloud Sandbox API
-        String result = executionService.executeCode(language, code, input, mainFile, files);
+        String result = executionService.executeCode(language, code, input, mainFile, files, envVars);
         return ResponseEntity.ok(result);
     }
 }
