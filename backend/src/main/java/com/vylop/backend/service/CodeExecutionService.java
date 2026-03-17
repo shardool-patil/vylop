@@ -124,8 +124,24 @@ public class CodeExecutionService {
                 }
             }
 
-            // 2. The Bulletproof Java Static Block Injection
+            // 2. The Bulletproof Java Handling (Delegator + Static Injection)
             if (language.equalsIgnoreCase("java")) {
+                // Find the actual class name the user wrote
+                String actualClassName = "Main"; 
+                Pattern pattern = Pattern.compile("public\\s+class\\s+([a-zA-Z0-9_]+)");
+                Matcher matcher = pattern.matcher(code);
+                
+                if (matcher.find()) {
+                    actualClassName = matcher.group(1);
+                } else {
+                    Pattern fallbackPattern = Pattern.compile("class\\s+([a-zA-Z0-9_]+)");
+                    Matcher fallbackMatcher = fallbackPattern.matcher(code);
+                    if (fallbackMatcher.find()) {
+                        actualClassName = fallbackMatcher.group(1);
+                    }
+                }
+
+                // Inject the static block into the user's code
                 if (hasEnv) {
                     StringBuilder javaEnv = new StringBuilder("static { ");
                     for (Map.Entry<String, String> env : envVars.entrySet()) {
@@ -137,8 +153,19 @@ public class CodeExecutionService {
                     // Regex inserts the static block right after 'class ClassName {'
                     code = code.replaceFirst("(class\\s+[a-zA-Z0-9_]+\\s*\\{)", "$1 " + javaEnv.toString());
                 }
-                requestBody.put("code", code);
+
+                // Create the delegator (this becomes prog.java)
+                String delegatorCode = "public class prog { public static void main(String[] args) throws Exception { " + actualClassName + ".main(args); } }";
+                requestBody.put("code", delegatorCode);
+
+                // Add the user's actual code as a separate, correctly named file
+                Map<String, String> mainFileObj = new HashMap<>();
+                mainFileObj.put("file", actualClassName + ".java");
+                mainFileObj.put("code", code);
+                extraFiles.add(mainFileObj);
+                
             } else {
+                // All other languages run normally
                 requestBody.put("code", code);
             }
 
