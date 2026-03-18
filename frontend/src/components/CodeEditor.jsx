@@ -1115,7 +1115,7 @@ const CodeEditor = () => {
                             {showMarkdownPreview && files[activeFile]?.language === "markdown" ? (
                                 <Split className="markdown-split" sizes={[50, 50]} minSize={100} gutterSize={8} direction="horizontal" style={{ display: 'flex', flex: 1 }}>
                                     <div style={{ height: '100%' }}>
-                                        <Editor height="100%" language="markdown" theme={editorTheme} value={files[activeFile]?.value || ""} onMount={handleEditorDidMount} onChange={handleEditorChange} options={{ readOnly: !canEdit, domReadOnly: !canEdit, minimap: { enabled: false }, fontSize: 14, fontFamily: 'JetBrains Mono', automaticLayout: true, wordWrap: 'on' }} />
+                                        <Editor height="100%" language="markdown" theme={editorTheme} value={files[activeFile]?.value || ""} onMount={handleEditorDidMount} onChange={handleEditorChange} options={{ readOnly: !canEdit, domReadOnly: !canEdit, minimap: { enabled: false }, fontSize: 14, fontFamily: 'JetBrains Mono', automaticLayout: true, wordWrap: 'on', hover: { above: false }, fixedOverflowWidgets: true }} />
                                     </div>
                                     <div className="markdown-preview" style={{ height: '100%', overflowY: 'auto', padding: '20px', backgroundColor: 'var(--bg-dark)', color: 'var(--text-main)' }}>
                                         <ReactMarkdown>{files[activeFile]?.value || ""}</ReactMarkdown>
@@ -1124,7 +1124,7 @@ const CodeEditor = () => {
                             ) : (
                                 <div style={{ flex: 1, minHeight: 0, height: '100%' }}>
                                     <Editor height="100%" language={files[activeFile]?.language === "cpp" ? "cpp" : files[activeFile]?.language} theme={editorTheme} value={files[activeFile]?.value || ""} onMount={handleEditorDidMount} onChange={handleEditorChange}
-                                        options={{ readOnly: !canEdit, domReadOnly: !canEdit, minimap: { enabled: false }, fontSize: 14, fontFamily: 'JetBrains Mono', automaticLayout: true, formatOnPaste: true, glyphMargin: true }} />
+                                        options={{ readOnly: !canEdit, domReadOnly: !canEdit, minimap: { enabled: false }, fontSize: 14, fontFamily: 'JetBrains Mono', automaticLayout: true, formatOnPaste: true, glyphMargin: true, hover: { above: false }, fixedOverflowWidgets: true }} />
                                 </div>
                             )}
                             <div id="vim-status-bar" className="vim-status-bar"></div>
