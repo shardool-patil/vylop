@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useLocation, useNavigate } from 'react-router-dom';
 import Editor from "@monaco-editor/react";
 import Stomp from 'stompjs';
@@ -14,9 +14,7 @@ import Client from './Client';
 import FileExplorer, { getFileIcon } from './FileExplorer';
 import './CodeEditor.css'; 
 
-// Production Backend URL
 const API_BASE_URL = 'https://vylop.onrender.com';
-
 const loadedRooms = new Set();
 
 const CODE_SNIPPETS = {
@@ -43,6 +41,129 @@ const getLanguageFromExtension = (fileName) => {
 
 const CURSOR_COLORS = ['#FF007F', '#00E5FF', '#FFD700', '#00FF00', '#9D00FF', '#FF7F50', '#00BFFF', '#FF1493'];
 
+// ─── Key fix: resolve rawFile from parser output to the full path used in files state ──
+// e.g. "Main.java" → "src/Main.java"
+const resolveFileName = (rawFile, files) => {
+    if (!rawFile) return rawFile;
+    // Exact match first
+    if (files[rawFile]) return rawFile;
+    // Strip leading ./ or /
+    const cleaned = rawFile.replace(/^\.\//, '').replace(/^\//, '');
+    if (files[cleaned]) return cleaned;
+    // Find by suffix match — "Main.java" matches "src/Main.java"
+    const match = Object.keys(files).find(f =>
+        f.endsWith('/' + cleaned) || f.endsWith('\\' + cleaned) || f === cleaned
+    );
+    return match || rawFile;
+};
+
+// ─── Error Parsers — each returns [{ fileName, line, col, message, severity }] ──
+
+const parseJavaErrors = (output, files) => {
+    const errors = [];
+    const regex = /([a-zA-Z0-9_/\\.-]+\.java):(\d+):\s*(error|warning):\s*(.+)/g;
+    let match;
+    while ((match = regex.exec(output)) !== null) {
+        errors.push({
+            fileName: resolveFileName(match[1], files),
+            line: parseInt(match[2], 10),
+            col: 1,
+            message: match[4].trim(),
+            severity: match[3] === 'error' ? 'error' : 'warning',
+        });
+    }
+    return errors;
+};
+
+const parsePythonErrors = (output, files) => {
+    const errors = [];
+    const regex = /File "([^"]+)",\s*line\s*(\d+)/g;
+    const msgRegex = /^(\w+Error|\w+Exception):\s*(.+)/m;
+    let match;
+    while ((match = regex.exec(output)) !== null) {
+        const msgMatch = output.slice(match.index).match(msgRegex);
+        errors.push({
+            fileName: resolveFileName(match[1], files),
+            line: parseInt(match[2], 10),
+            col: 1,
+            message: msgMatch ? `${msgMatch[1]}: ${msgMatch[2]}` : 'Error',
+            severity: 'error',
+        });
+    }
+    return errors;
+};
+
+const parseCppErrors = (output, files) => {
+    const errors = [];
+    const regex = /([a-zA-Z0-9_/\\.-]+\.(?:cpp|cc|h|hpp)):(\d+):(\d+):\s*(error|warning|note):\s*(.+)/g;
+    let match;
+    while ((match = regex.exec(output)) !== null) {
+        errors.push({
+            fileName: resolveFileName(match[1], files),
+            line: parseInt(match[2], 10),
+            col: parseInt(match[3], 10),
+            message: match[5].trim(),
+            severity: match[4] === 'error' ? 'error' : match[4] === 'warning' ? 'warning' : 'info',
+        });
+    }
+    return errors;
+};
+
+const parseGoErrors = (output, files) => {
+    const errors = [];
+    const regex = /\.?\/?([\w/.-]+\.go):(\d+):(\d+):\s*(.+)/g;
+    let match;
+    while ((match = regex.exec(output)) !== null) {
+        errors.push({
+            fileName: resolveFileName(match[1], files),
+            line: parseInt(match[2], 10),
+            col: parseInt(match[3], 10),
+            message: match[4].trim(),
+            severity: 'error',
+        });
+    }
+    return errors;
+};
+
+const parseRustErrors = (output, files) => {
+    const errors = [];
+    const regex = /-+>\s*([\w/.-]+\.rs):(\d+):(\d+)/g;
+    const msgRegex = /^(error|warning)(\[[\w]+\])?:\s*(.+)/m;
+    let match;
+    while ((match = regex.exec(output)) !== null) {
+        const before = output.slice(Math.max(0, match.index - 200), match.index);
+        const msgMatch = before.match(msgRegex);
+        errors.push({
+            fileName: resolveFileName(match[1], files),
+            line: parseInt(match[2], 10),
+            col: parseInt(match[3], 10),
+            message: msgMatch ? msgMatch[3].trim() : 'Error',
+            severity: msgMatch?.[1] === 'warning' ? 'warning' : 'error',
+        });
+    }
+    return errors;
+};
+
+const parseErrors = (output, language, files) => {
+    if (!output || output === 'Running...') return [];
+    const hasError = /(error|exception|traceback|failed|undefined|cannot|no such|warning)/i.test(output);
+    if (!hasError) return [];
+    switch (language) {
+        case 'java': return parseJavaErrors(output, files);
+        case 'python': return parsePythonErrors(output, files);
+        case 'cpp': return parseCppErrors(output, files);
+        case 'go': return parseGoErrors(output, files);
+        case 'rust': return parseRustErrors(output, files);
+        default: return [];
+    }
+};
+
+const getSeverityColor = (severity) => {
+    if (severity === 'error') return '#ff6b6b';
+    if (severity === 'warning') return '#f0883e';
+    return '#58a6ff';
+};
+
 const CodeEditor = () => {
     const { roomId } = useParams();
     const location = useLocation();
@@ -65,8 +186,12 @@ const CodeEditor = () => {
     const [users, setUsers] = useState([]); 
     const [currentUserRole, setCurrentUserRole] = useState('READ_ONLY');
 
+    // { [fullFilePath]: [{ line, col, message, severity }] }
+    const [editorErrors, setEditorErrors] = useState({});
+    const decorationIds = useRef([]);
+    const viewZoneIds = useRef([]);
+
     const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-    
     const [isExplorerExpanded, setIsExplorerExpanded] = useState(true);
     const [isOnlineExpanded, setIsOnlineExpanded] = useState(true);
     const [isChatExpanded, setIsChatExpanded] = useState(true);
@@ -88,7 +213,6 @@ const CodeEditor = () => {
     const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
     const [fileToDelete, setFileToDelete] = useState(null);
 
-    // --- NEW: Secrets Management State ---
     const [isSecretsModalOpen, setIsSecretsModalOpen] = useState(false);
     const [secrets, setSecrets] = useState([{ key: '', value: '' }]);
 
@@ -101,7 +225,8 @@ const CodeEditor = () => {
     const stompClient = useRef(null);
     const isConnected = useRef(false);
     const notifiedUsers = useRef(new Set()); 
-    const pendingCursors = useRef({}); 
+    const pendingCursors = useRef({});
+    const isLocalChange = useRef(false);
     const userColorMap = useRef({});
     const nextColorIndex = useRef(0);
     const disconnectTimeoutRef = useRef(null); 
@@ -123,62 +248,125 @@ const CodeEditor = () => {
         return userColorMap.current[user];
     };
 
+    // ─── Apply decorations + inline view zones ────────────────────────────────
+    const applyDecorations = useCallback((fileName) => {
+        if (!editorRef.current || !monacoRef.current) return;
+        const monaco = monacoRef.current;
+        const editor = editorRef.current;
+        const errors = editorErrors[fileName] || [];
+
+        // Wavy underline decorations
+        const newDecorations = errors.map(err => ({
+            range: new monaco.Range(err.line, err.col || 1, err.line, Number.MAX_VALUE),
+            options: {
+                inlineClassName: err.severity === 'error' ? 'diagnostic-error' : err.severity === 'warning' ? 'diagnostic-warning' : 'diagnostic-info',
+                hoverMessage: { value: `**${err.severity.toUpperCase()}**: ${err.message}` },
+                overviewRuler: { color: getSeverityColor(err.severity), position: monaco.editor.OverviewRulerLane.Right },
+                minimap: { color: getSeverityColor(err.severity), position: monaco.editor.MinimapPosition.Inline },
+                glyphMarginClassName: err.severity === 'error' ? 'diagnostic-glyph-error' : 'diagnostic-glyph-warning',
+            }
+        }));
+        decorationIds.current = editor.deltaDecorations(decorationIds.current, newDecorations);
+
+        // View zones — inline message below each error line
+        editor.changeViewZones(accessor => {
+            viewZoneIds.current.forEach(id => accessor.removeZone(id));
+            viewZoneIds.current = [];
+
+            errors.forEach(err => {
+                const color = getSeverityColor(err.severity);
+                const icon = err.severity === 'error' ? '●' : '▲';
+
+                // marginDomNode forces Monaco to reserve left-gutter space correctly
+                const marginDomNode = document.createElement('div');
+
+                const domNode = document.createElement('div');
+                domNode.style.cssText = `
+                    display: flex;
+                    align-items: center;
+                    gap: 6px;
+                    padding: 1px 12px 1px 12px;
+                    font-family: JetBrains Mono, monospace;
+                    font-size: 12px;
+                    color: ${color};
+                    background: ${color}11;
+                    border-left: 2px solid ${color}66;
+                    white-space: nowrap;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                    cursor: pointer;
+                    box-sizing: border-box;
+                    width: 100%;
+                    height: 100%;
+                `;
+                domNode.title = `Line ${err.line}: ${err.message}`;
+                domNode.innerHTML = `<span style="opacity:0.7;font-size:10px;margin-right:4px">${icon}</span>${err.message}`;
+                domNode.onclick = () => {
+                    editor.revealLineNearTop(err.line);
+                    editor.setPosition({ lineNumber: err.line, column: 1 });
+                    editor.focus();
+                };
+
+                const zoneId = accessor.addZone({
+                    afterLineNumber: err.line,  // zone appears AFTER this line number
+                    afterColumn: Number.MAX_VALUE,
+                    heightInLines: 1,
+                    minWidthInPx: 200,
+                    domNode,
+                    marginDomNode,
+                });
+                viewZoneIds.current.push(zoneId);
+            });
+        });
+    }, [editorErrors]);
+
     useEffect(() => {
-        if (!username) {
-            toast.error("Please login first");
-            navigate('/auth');
-        }
+        applyDecorations(activeFile);
+        return () => {
+            if (editorRef.current) {
+                editorRef.current.changeViewZones(accessor => {
+                    viewZoneIds.current.forEach(id => accessor.removeZone(id));
+                    viewZoneIds.current = [];
+                });
+            }
+        };
+    }, [activeFile, editorErrors, applyDecorations]);
+
+    useEffect(() => {
+        if (!username) { toast.error("Please login first"); navigate('/auth'); }
     }, [username, navigate]);
 
     useEffect(() => {
         let isMounted = true;
-
         const fetchWorkspaceData = async () => {
             if (loadedRooms.has(roomId)) return;
             loadedRooms.add(roomId);
-
             try {
                 const metaRes = await axios.get(`${API_BASE_URL}/api/workspace/${roomId}`);
-                if (isMounted && metaRes.data?.name) {
-                    setRoomName(metaRes.data.name);
-                }
-
+                if (isMounted && metaRes.data?.name) setRoomName(metaRes.data.name);
                 const response = await axios.get(`${API_BASE_URL}/api/workspace/${roomId}/load`);
-                
                 if (!isMounted) return;
-
                 const loadedFiles = response.data;
-                
                 if (loadedFiles && Object.keys(loadedFiles).length > 0) {
                     const newFilesState = {};
                     Object.keys(loadedFiles).forEach(fileName => {
-                        const content = loadedFiles[fileName];
-                        const lang = getLanguageFromExtension(fileName);
-                        newFilesState[fileName] = { name: fileName, language: lang, value: content };
+                        newFilesState[fileName] = { name: fileName, language: getLanguageFromExtension(fileName), value: loadedFiles[fileName] };
                     });
-                    
                     setFiles(newFilesState);
                     const firstFile = Object.keys(newFilesState)[0];
                     setActiveFile(firstFile);
-                    setOpenFiles([firstFile]); 
-                    
+                    setOpenFiles([firstFile]);
                     toast.success("Workspace synced", { icon: '☁️', id: 'workspace-loaded-toast' });
                 }
             } catch (error) {
                 if (isMounted) {
                     loadedRooms.delete(roomId);
                     setRoomName(prev => prev === "Syncing Workspace..." ? "Dev Workspace" : prev);
-                    console.log("Sync error:", error);
                 }
             }
         };
-
         if (roomId && username) fetchWorkspaceData();
-
-        return () => {
-            isMounted = false;
-            loadedRooms.delete(roomId);
-        };
+        return () => { isMounted = false; loadedRooms.delete(roomId); };
     }, [roomId, username]);
 
     useEffect(() => {
@@ -193,57 +381,32 @@ const CodeEditor = () => {
 
     const updateRemoteCursor = (user, pos, file) => {
         if (user === username) return;
-        
         if (file !== activeFile) {
-            if (remoteCursors.current[user] && editorRef.current) {
-                editorRef.current.removeContentWidget(remoteCursors.current[user]);
-            }
+            if (remoteCursors.current[user] && editorRef.current) editorRef.current.removeContentWidget(remoteCursors.current[user]);
             return;
         }
-
-        if (!editorRef.current || !monacoRef.current) {
-            pendingCursors.current[user] = { pos, file };
-            return;
-        }
-
-        if (remoteCursors.current[user]) {
-            editorRef.current.removeContentWidget(remoteCursors.current[user]);
-        }
-
+        if (!editorRef.current || !monacoRef.current) { pendingCursors.current[user] = { pos, file }; return; }
+        if (remoteCursors.current[user]) editorRef.current.removeContentWidget(remoteCursors.current[user]);
         const userColor = getUserColor(user);
         const lineHeight = editorRef.current.getOption(monacoRef.current.editor.EditorOption.lineHeight);
-
-        const widgetId = `cursor-${user}`;
         const widget = {
-            getId: () => widgetId,
+            getId: () => `cursor-${user}`,
             getDomNode: () => {
                 const node = document.createElement('div');
                 node.className = 'remote-cursor';
                 node.style.height = `${lineHeight}px`;
-                node.style.backgroundColor = userColor; 
-                
+                node.style.backgroundColor = userColor;
                 const label = document.createElement('div');
                 label.className = 'remote-cursor-label';
                 label.innerText = user;
-                label.style.backgroundColor = userColor; 
-                
-                if (pos.lineNumber === 1) {
-                    label.style.top = `${lineHeight}px`; 
-                    label.style.borderRadius = '0 3px 3px 3px';
-                } else {
-                    label.style.top = '-20px'; 
-                    label.style.borderRadius = '3px 3px 3px 0';
-                }
-                
+                label.style.backgroundColor = userColor;
+                label.style.top = pos.lineNumber === 1 ? `${lineHeight}px` : '-20px';
+                label.style.borderRadius = pos.lineNumber === 1 ? '0 3px 3px 3px' : '3px 3px 3px 0';
                 node.appendChild(label);
                 return node;
             },
-            getPosition: () => ({
-                position: { lineNumber: pos.lineNumber, column: pos.column },
-                preference: [monacoRef.current.editor.ContentWidgetPositionPreference.EXACT]
-            })
+            getPosition: () => ({ position: { lineNumber: pos.lineNumber, column: pos.column }, preference: [monacoRef.current.editor.ContentWidgetPositionPreference.EXACT] })
         };
-
         editorRef.current.addContentWidget(widget);
         remoteCursors.current[user] = widget;
     };
@@ -253,39 +416,50 @@ const CodeEditor = () => {
         monacoRef.current = monaco;
         window.monaco = monaco;
 
+        // Enable built-in JS/TS diagnostics — real squiggles as you type
+        monaco.languages.typescript.javascriptDefaults.setDiagnosticsOptions({ noSemanticValidation: false, noSyntaxValidation: false });
+        monaco.languages.typescript.typescriptDefaults.setDiagnosticsOptions({ noSemanticValidation: false, noSyntaxValidation: false });
+        monaco.languages.typescript.javascriptDefaults.setCompilerOptions({ target: monaco.languages.typescript.ScriptTarget.ES2020, allowNonTsExtensions: true, checkJs: true });
+        monaco.languages.typescript.typescriptDefaults.setCompilerOptions({ target: monaco.languages.typescript.ScriptTarget.ES2020, allowNonTsExtensions: true, strict: true });
+
+        // Inject CSS for wavy underline decorations (only once)
+        if (!document.getElementById('diagnostic-styles')) {
+            const style = document.createElement('style');
+            style.id = 'diagnostic-styles';
+            style.textContent = `
+                .diagnostic-error { text-decoration: underline wavy #ff6b6b; text-underline-offset: 3px; }
+                .diagnostic-warning { text-decoration: underline wavy #f0883e; text-underline-offset: 3px; }
+                .diagnostic-info { text-decoration: underline wavy #58a6ff; text-underline-offset: 3px; }
+                .diagnostic-glyph-error::before { content: '●'; color: #ff6b6b; font-size: 10px; }
+                .diagnostic-glyph-warning::before { content: '▲'; color: #f0883e; font-size: 10px; }
+            `;
+            document.head.appendChild(style);
+        }
+
         Object.keys(pendingCursors.current).forEach(user => {
-            if (pendingCursors.current[user].file === activeFile) {
-                updateRemoteCursor(user, pendingCursors.current[user].pos, pendingCursors.current[user].file);
-            }
+            if (pendingCursors.current[user].file === activeFile) updateRemoteCursor(user, pendingCursors.current[user].pos, pendingCursors.current[user].file);
         });
-        pendingCursors.current = {}; 
+        pendingCursors.current = {};
 
         editor.onDidChangeCursorPosition((e) => {
             if (stompClient.current?.connected && activeFile) {
-                stompClient.current.send(`/app/cursor/${roomId}`, {}, JSON.stringify({
-                    username,
-                    lineNumber: e.position.lineNumber,
-                    column: e.position.column,
-                    fileName: activeFile 
-                }));
+                stompClient.current.send(`/app/cursor/${roomId}`, {}, JSON.stringify({ username, lineNumber: e.position.lineNumber, column: e.position.column, fileName: activeFile }));
             }
         });
+
+        applyDecorations(activeFile);
     };
 
     const toggleVimMode = () => {
         if (!editorRef.current) return;
         if (isVimMode) {
-            if (vimInstanceRef.current) {
-                vimInstanceRef.current.dispose();
-                vimInstanceRef.current = null;
-            }
+            if (vimInstanceRef.current) { vimInstanceRef.current.dispose(); vimInstanceRef.current = null; }
             const statusNode = document.getElementById('vim-status-bar');
             if (statusNode) statusNode.innerHTML = '';
             setIsVimMode(false);
             toast("Vim Mode Disabled", { icon: '⌨️' });
         } else {
-            const statusNode = document.getElementById('vim-status-bar');
-            vimInstanceRef.current = initVimMode(editorRef.current, statusNode);
+            vimInstanceRef.current = initVimMode(editorRef.current, document.getElementById('vim-status-bar'));
             setIsVimMode(true);
             toast.success("Vim Mode Enabled");
         }
@@ -311,12 +485,7 @@ const CodeEditor = () => {
 
     useEffect(() => {
         if (!username) return;
-
-        if (disconnectTimeoutRef.current) {
-            clearTimeout(disconnectTimeoutRef.current);
-            disconnectTimeoutRef.current = null;
-        }
-
+        if (disconnectTimeoutRef.current) { clearTimeout(disconnectTimeoutRef.current); disconnectTimeoutRef.current = null; }
         let reconnectTimeout;
         const handleBeforeUnload = () => {
             if (stompClient.current?.connected) {
@@ -328,11 +497,9 @@ const CodeEditor = () => {
 
         const connectToSocket = () => {
             if (isConnected.current) return;
-            
             const socket = new SockJS(`${API_BASE_URL}/ws`);
             const client = Stomp.over(socket);
-            client.debug = () => {}; 
-            
+            client.debug = () => {};
             client.connect({}, () => {
                 stompClient.current = client;
                 isConnected.current = true;
@@ -341,43 +508,27 @@ const CodeEditor = () => {
 
                 client.subscribe(`/topic/code/${roomId}`, (msg) => {
                     const body = JSON.parse(msg.body);
-                    
                     if (body.type === "DELETE") {
-                        setFiles(prev => {
-                            const newFiles = { ...prev };
-                            delete newFiles[body.fileName];
-                            return newFiles;
-                        });
+                        setFiles(prev => { const n = { ...prev }; delete n[body.fileName]; return n; });
                         setOpenFiles(prev => {
-                            const newOpenFiles = prev.filter(f => f !== body.fileName);
-                            if (activeFile === body.fileName) {
-                                setActiveFile(newOpenFiles.length > 0 ? newOpenFiles[newOpenFiles.length - 1] : null);
-                            }
-                            return newOpenFiles;
+                            const n = prev.filter(f => f !== body.fileName);
+                            if (activeFile === body.fileName) setActiveFile(n.length > 0 ? n[n.length - 1] : null);
+                            return n;
                         });
-
-                        if (body.sender !== username) {
-                            toast(`${body.sender} deleted ${body.fileName}`, { icon: '🗑️' });
-                        }
-                    } else if (body.sender !== username) {
-                        setFiles(prev => ({
-                            ...prev,
-                            [body.fileName]: {
-                                name: body.fileName,
-                                language: body.language,
-                                value: body.content
-                            }
-                        }));
+                        setEditorErrors(prev => { const n = { ...prev }; delete n[body.fileName]; return n; });
+                        if (body.sender !== username) toast(`${body.sender} deleted ${body.fileName}`, { icon: '🗑️' });
+                    } else if (!isLocalChange.current) {
+                        setFiles(prev => ({ ...prev, [body.fileName]: { name: body.fileName, language: body.language, value: body.content } }));
                     }
+                    isLocalChange.current = false;
                 });
 
                 client.subscribe(`/topic/users/${roomId}`, (msg) => {
                     const body = JSON.parse(msg.body);
-                    
                     if (body.type === 'KICK') {
                         if (body.username === username) {
                             toast.error("You have been kicked from the room by the host.", { icon: '🥾', duration: 5000 });
-                            window.location.href = '/'; 
+                            window.location.href = '/';
                             return;
                         } else {
                             toast(`${body.username} was kicked by the host.`);
@@ -392,19 +543,16 @@ const CodeEditor = () => {
                             setTimeout(() => notifiedUsers.current.delete(toastKey), 4000);
                         }
                     }
-
                     if (body.users) {
-                        body.users.forEach(activeUserObj => getUserColor(activeUserObj.username));
+                        body.users.forEach(u => getUserColor(u.username));
                         setUsers(body.users);
-                        
                         const me = body.users.find(u => u.username === username);
                         if (me) setCurrentUserRole(me.role);
-                        
                         const activeUsernames = body.users.map(u => u.username);
-                        Object.keys(remoteCursors.current).forEach(existingUser => {
-                            if (!activeUsernames.includes(existingUser)) {
-                                if (editorRef.current) editorRef.current.removeContentWidget(remoteCursors.current[existingUser]);
-                                delete remoteCursors.current[existingUser];
+                        Object.keys(remoteCursors.current).forEach(u => {
+                            if (!activeUsernames.includes(u)) {
+                                if (editorRef.current) editorRef.current.removeContentWidget(remoteCursors.current[u]);
+                                delete remoteCursors.current[u];
                             }
                         });
                     }
@@ -415,52 +563,43 @@ const CodeEditor = () => {
                     const body = JSON.parse(msg.body);
                     if (body.username !== username) {
                         setTypingUsers(prev => {
-                            const newSet = new Set(prev);
-                            body.isTyping === 'true' ? newSet.add(body.username) : newSet.delete(body.username);
-                            return Array.from(newSet);
+                            const s = new Set(prev);
+                            body.isTyping === 'true' ? s.add(body.username) : s.delete(body.username);
+                            return Array.from(s);
                         });
                     }
                 });
-
                 client.subscribe(`/topic/cursor/${roomId}`, (msg) => {
                     const body = JSON.parse(msg.body);
                     updateRemoteCursor(body.username, { lineNumber: body.lineNumber, column: body.column }, body.fileName || activeFile);
                 });
-
                 client.send(`/app/room/${roomId}/join`, {}, JSON.stringify({ username, type: "JOIN" }));
-            }, (err) => {
-                isConnected.current = false;
-                setWsConnected(false);
-                stompClient.current = null;
+            }, () => {
+                isConnected.current = false; setWsConnected(false); stompClient.current = null;
                 reconnectTimeout = setTimeout(connectToSocket, 3000);
             });
         };
         connectToSocket();
-        
+
         return () => {
             window.removeEventListener('beforeunload', handleBeforeUnload);
             clearTimeout(reconnectTimeout);
-            
             disconnectTimeoutRef.current = setTimeout(() => {
                 if (stompClient.current?.connected) {
                     stompClient.current.send(`/app/room/${roomId}/leave`, {}, JSON.stringify({ username, type: "LEAVE" }));
                     stompClient.current.disconnect();
                 }
-                isConnected.current = false;
-                setWsConnected(false);
-                stompClient.current = null;
+                isConnected.current = false; setWsConnected(false); stompClient.current = null;
             }, 200);
         };
-    }, [roomId, username, navigate]); 
+    }, [roomId, username, navigate]);
 
     useEffect(() => {
         if (chatContainerRef.current) chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
     }, [messages, typingUsers]);
 
     const handleFileOpen = (fileName) => {
-        if (!openFiles.includes(fileName)) {
-            setOpenFiles(prev => [...prev, fileName]);
-        }
+        if (!openFiles.includes(fileName)) setOpenFiles(prev => [...prev, fileName]);
         setActiveFile(fileName);
     };
 
@@ -468,110 +607,62 @@ const CodeEditor = () => {
         e.stopPropagation();
         const newOpenFiles = openFiles.filter(f => f !== fileName);
         setOpenFiles(newOpenFiles);
-        if (activeFile === fileName) {
-            setActiveFile(newOpenFiles.length > 0 ? newOpenFiles[newOpenFiles.length - 1] : null);
-        }
+        if (activeFile === fileName) setActiveFile(newOpenFiles.length > 0 ? newOpenFiles[newOpenFiles.length - 1] : null);
     };
 
     const handleCreateNewFile = () => {
-        if (!canEdit) return; 
-        if (!newFileName.trim()) {
-            toast.error("File name cannot be empty");
-            return;
-        }
-
+        if (!canEdit) return;
+        if (!newFileName.trim()) { toast.error("File name cannot be empty"); return; }
         const name = newFileName.trim();
-        const lang = newFileLang;
-        const initialCode = CODE_SNIPPETS[lang] || `// Welcome to Vylop!\n// Start coding in ${name}...`;
-
-        const newFile = { name, language: lang, value: initialCode };
-        
-        setFiles(prev => ({ ...prev, [name]: newFile }));
-        
-        if (!openFiles.includes(name)) {
-            setOpenFiles(prev => [...prev, name]);
-        }
+        const initialCode = CODE_SNIPPETS[newFileLang] || `// Start coding in ${name}...`;
+        setFiles(prev => ({ ...prev, [name]: { name, language: newFileLang, value: initialCode } }));
+        if (!openFiles.includes(name)) setOpenFiles(prev => [...prev, name]);
         setActiveFile(name);
-        
         if (stompClient.current?.connected) {
-            stompClient.current.send(`/app/code/${roomId}`, {}, JSON.stringify({ 
-                sender: username, content: initialCode, language: lang, type: "CODE", fileName: name 
-            }));
+            stompClient.current.send(`/app/code/${roomId}`, {}, JSON.stringify({ sender: username, content: initialCode, language: newFileLang, type: "CODE", fileName: name }));
         }
-
-        setIsModalOpen(false);
-        setNewFileName("");
+        setIsModalOpen(false); setNewFileName("");
     };
 
     const handleDeleteIconClick = (e, fileName) => {
-        e.stopPropagation(); 
-        if (!canEdit) {
-            toast.error("You are in read-only mode");
-            return;
-        }
-        if (Object.keys(files).length === 1) {
-            toast.error("You cannot delete the last remaining file.", { icon: '⚠️' });
-            return;
-        }
-        setFileToDelete(fileName);
-        setIsDeleteModalOpen(true);
+        e.stopPropagation();
+        if (!canEdit) { toast.error("You are in read-only mode"); return; }
+        if (Object.keys(files).length === 1) { toast.error("Cannot delete the last file.", { icon: '⚠️' }); return; }
+        setFileToDelete(fileName); setIsDeleteModalOpen(true);
     };
 
     const confirmDeleteFile = () => {
         if (!fileToDelete || !canEdit) return;
-
-        setFiles(prev => {
-            const newFiles = { ...prev };
-            delete newFiles[fileToDelete];
-            return newFiles;
-        });
-        
+        setFiles(prev => { const n = { ...prev }; delete n[fileToDelete]; return n; });
         setOpenFiles(prev => {
-            const newOpenFiles = prev.filter(f => f !== fileToDelete);
-            if (activeFile === fileToDelete) {
-                setActiveFile(newOpenFiles.length > 0 ? newOpenFiles[newOpenFiles.length - 1] : null);
-            }
-            return newOpenFiles;
+            const n = prev.filter(f => f !== fileToDelete);
+            if (activeFile === fileToDelete) setActiveFile(n.length > 0 ? n[n.length - 1] : null);
+            return n;
         });
-        
+        setEditorErrors(prev => { const n = { ...prev }; delete n[fileToDelete]; return n; });
         if (stompClient.current?.connected) {
-            stompClient.current.send(`/app/code/${roomId}`, {}, JSON.stringify({ 
-                sender: username, type: "DELETE", fileName: fileToDelete 
-            }));
+            stompClient.current.send(`/app/code/${roomId}`, {}, JSON.stringify({ sender: username, type: "DELETE", fileName: fileToDelete }));
         }
         toast.success(`${fileToDelete} deleted`);
-        
-        setIsDeleteModalOpen(false);
-        setFileToDelete(null);
+        setIsDeleteModalOpen(false); setFileToDelete(null);
     };
 
     const handleLanguageSelect = (e) => {
-        if (!isHost || !activeFile) return; 
+        if (!isHost || !activeFile) return;
         const newLang = e.target.value;
         const newCode = CODE_SNIPPETS[newLang];
-
-        setFiles(prev => ({
-            ...prev,
-            [activeFile]: { ...prev[activeFile], language: newLang, value: newCode }
-        }));
-
+        setFiles(prev => ({ ...prev, [activeFile]: { ...prev[activeFile], language: newLang, value: newCode } }));
+        setEditorErrors(prev => { const n = { ...prev }; delete n[activeFile]; return n; });
         if (stompClient.current?.connected) {
-            stompClient.current.send(`/app/code/${roomId}`, {}, JSON.stringify({ 
-                sender: username, content: newCode, language: newLang, type: "CODE", fileName: activeFile 
-            }));
+            stompClient.current.send(`/app/code/${roomId}`, {}, JSON.stringify({ sender: username, content: newCode, language: newLang, type: "CODE", fileName: activeFile }));
         }
     };
 
     const handleEditorChange = (value) => {
-        if (stompClient.current?.connected && canEdit && activeFile) { 
-            setFiles(prev => ({
-                ...prev,
-                [activeFile]: { ...prev[activeFile], value }
-            }));
-
-            stompClient.current.send(`/app/code/${roomId}`, {}, JSON.stringify({ 
-                sender: username, content: value, language: files[activeFile].language, type: "CODE", fileName: activeFile 
-            }));
+        if (stompClient.current?.connected && canEdit && activeFile) {
+            isLocalChange.current = true;
+            setFiles(prev => ({ ...prev, [activeFile]: { ...prev[activeFile], value } }));
+            stompClient.current.send(`/app/code/${roomId}`, {}, JSON.stringify({ sender: username, content: value, language: files[activeFile].language, type: "CODE", fileName: activeFile }));
         }
     };
 
@@ -589,101 +680,99 @@ const CodeEditor = () => {
     const sendChat = () => {
         if (chatMsg.trim() && stompClient.current?.connected) {
             stompClient.current.send(`/app/chat/${roomId}`, {}, JSON.stringify({ sender: username, content: chatMsg }));
-            setChatMsg("");
-            clearTimeout(typingTimeoutRef.current);
+            setChatMsg(""); clearTimeout(typingTimeoutRef.current);
             stompClient.current.send(`/app/typing/${roomId}`, {}, JSON.stringify({ username, isTyping: 'false' }));
         }
     };
 
     const formatCode = () => {
-        if (!canEdit || !activeFile) return; 
+        if (!canEdit || !activeFile) return;
         if (editorRef.current) {
             editorRef.current.getAction('editor.action.formatDocument').run();
-            if (['javascript', 'typescript'].includes(files[activeFile]?.language)) {
-                toast.success("Code formatted!");
-            } else {
-                toast("Native formatting is only available for JS/TS.", { icon: 'ℹ️' });
-            }
+            if (['javascript', 'typescript'].includes(files[activeFile]?.language)) toast.success("Code formatted!");
+            else toast("Native formatting is only available for JS/TS.", { icon: 'ℹ️' });
         }
     };
 
     const runCode = async () => {
         if (!activeFile) return;
         setIsRunning(true);
-        setOutput("Running..."); 
+        setOutput("Running...");
+        setEditorErrors({});
         try {
             const fileData = {};
             Object.keys(files).forEach(key => { fileData[key] = files[key].value; });
-
-            // --- NEW: Convert secrets array to key-value object for backend payload ---
             const envVarsPayload = secrets.reduce((acc, curr) => {
-                if (curr.key.trim() && curr.value.trim()) {
-                    acc[curr.key.trim()] = curr.value.trim();
-                }
+                if (curr.key.trim() && curr.value.trim()) acc[curr.key.trim()] = curr.value.trim();
                 return acc;
             }, {});
-
-            const response = await axios.post(`${API_BASE_URL}/api/execute`, { 
-                language: files[activeFile].language, 
-                code: files[activeFile].value, 
+            const response = await axios.post(`${API_BASE_URL}/api/execute`, {
+                language: files[activeFile].language,
+                code: files[activeFile].value,
                 input: userInput,
                 mainFile: activeFile,
                 files: fileData,
-                envVars: envVarsPayload // Send the mapped secrets!
+                envVars: envVarsPayload
             });
-            setOutput(response.data); 
-        } catch (error) { setOutput("Execution failed."); }
-        finally { setIsRunning(false); }
+            const outputText = response.data;
+            setOutput(outputText);
+
+            // Parse errors — resolveFileName ensures keys match openFiles paths exactly
+            const parsed = parseErrors(outputText, files[activeFile].language, files);
+            if (parsed.length > 0) {
+                const byFile = {};
+                parsed.forEach(err => {
+                    if (!byFile[err.fileName]) byFile[err.fileName] = [];
+                    byFile[err.fileName].push(err);
+                });
+                setEditorErrors(byFile);
+                const errCount = parsed.filter(e => e.severity === 'error').length;
+                const warnCount = parsed.filter(e => e.severity === 'warning').length;
+                if (errCount > 0) toast.error(`${errCount} error${errCount > 1 ? 's' : ''} found`, { icon: '🔴' });
+                else if (warnCount > 0) toast(`${warnCount} warning${warnCount > 1 ? 's' : ''}`, { icon: '🟡' });
+            }
+        } catch (error) {
+            setOutput("Execution failed.");
+        } finally {
+            setIsRunning(false);
+        }
     };
 
     const saveWorkspace = async () => {
-        if (!isHost) return; 
+        if (!isHost) return;
         setIsSaving(true);
         try {
             const fileData = {};
             Object.keys(files).forEach(key => { fileData[key] = files[key].value; });
-
             await axios.post(`${API_BASE_URL}/api/workspace/${roomId}/save?username=${encodeURIComponent(username)}&roomName=${encodeURIComponent(roomName)}`, fileData);
-            
             toast.success("Workspace saved to cloud! ☁️");
         } catch (error) {
             toast.error(error.response?.data || "Failed to save workspace.");
-        } finally {
-            setIsSaving(false);
-        }
+        } finally { setIsSaving(false); }
     };
 
     const downloadWorkspace = async () => {
         try {
             const zip = new JSZip();
-            Object.keys(files).forEach(fileName => {
-                zip.file(fileName, files[fileName].value);
-            });
+            Object.keys(files).forEach(fileName => { zip.file(fileName, files[fileName].value); });
             const content = await zip.generateAsync({ type: "blob" });
-            const safeRoomName = roomName.replace(/[^a-zA-Z0-9]/g, '_');
-            saveAs(content, `${safeRoomName}_vylop.zip`);
+            saveAs(content, `${roomName.replace(/[^a-zA-Z0-9]/g, '_')}_vylop.zip`);
             toast.success("Workspace Exported! 📦");
-        } catch (error) {
-            console.error("ZIP Generation Error:", error);
-            toast.error("Failed to export workspace");
-        }
+        } catch (error) { toast.error("Failed to export workspace"); }
     };
 
     const copyRoomLink = () => {
-        const link = `${window.location.origin}/room/${roomId}`;
-        navigator.clipboard.writeText(link);
+        navigator.clipboard.writeText(`${window.location.origin}/room/${roomId}`);
         toast.success("Invite Link Copied!", { icon: '🔗' });
     };
 
     const handleJumpToLine = (fileName, lineNumber) => {
         if (files[fileName]) {
-            if (activeFile !== fileName) {
-                handleFileOpen(fileName);
-            }
+            if (activeFile !== fileName) handleFileOpen(fileName);
             setTimeout(() => {
                 if (editorRef.current) {
-                    editorRef.current.revealLineInCenter(lineNumber);
-                    editorRef.current.setPosition({ lineNumber: lineNumber, column: 1 });
+                    editorRef.current.revealLineNearTop(lineNumber);
+                    editorRef.current.setPosition({ lineNumber, column: 1 });
                     editorRef.current.focus();
                 }
             }, 50);
@@ -698,27 +787,21 @@ const CodeEditor = () => {
         return lines.map((line, index) => {
             const isError = /(error|exception|traceback|failed|at\s+[\w.]+\.)/i.test(line);
             const style = isError ? { color: '#ff6b6b' } : { color: '#e1e4e8' };
-
-            const match1 = line.match(/([a-zA-Z0-9_-]+\.[a-zA-Z0-9]+):(\d+)/);
+            const match1 = line.match(/([a-zA-Z0-9_/\\-]+\.[a-zA-Z0-9]+):(\d+)/);
             const match2 = line.match(/File "([^"]+)", line (\d+)/);
-
-            let match = match1 || match2;
-
+            const match = match1 || match2;
             if (match) {
                 const fullMatch = match[0];
-                const fileName = match[1];
+                const rawFile = match[1];
                 const lineNumber = parseInt(match[2], 10);
-
+                const resolvedFile = resolveFileName(rawFile, files);
                 const parts = line.split(fullMatch);
-
                 return (
                     <div key={index} style={{ ...style, fontFamily: 'JetBrains Mono, monospace', lineHeight: '1.5' }}>
                         {parts[0]}
-                        <span 
-                            onClick={() => handleJumpToLine(fileName, lineNumber)}
+                        <span onClick={() => handleJumpToLine(resolvedFile, lineNumber)}
                             style={{ textDecoration: 'underline', cursor: 'pointer', color: '#58a6ff', fontWeight: 'bold' }}
-                            title={`Jump to line ${lineNumber} in ${fileName}`}
-                        >
+                            title={`Jump to line ${lineNumber} in ${resolvedFile}`}>
                             {fullMatch}
                         </span>
                         {parts[1]}
@@ -732,26 +815,40 @@ const CodeEditor = () => {
     const renderTabName = (filePath) => {
         const fileName = filePath.split('/').pop();
         const duplicates = openFiles.filter(p => p.split('/').pop() === fileName);
-        
+        // Use full path key — now guaranteed to match editorErrors keys via resolveFileName
+        const fileErrors = editorErrors[filePath] || [];
+        const errorCount = fileErrors.filter(e => e.severity === 'error').length;
+        const warnCount = fileErrors.filter(e => e.severity === 'warning').length;
+
+        const badge = errorCount > 0 ? (
+            <span style={{ marginLeft: '5px', background: '#ff6b6b', color: '#fff', borderRadius: '8px', fontSize: '0.6rem', padding: '0 5px', fontWeight: 'bold', lineHeight: '16px', flexShrink: 0 }}>
+                {errorCount}
+            </span>
+        ) : warnCount > 0 ? (
+            <span style={{ marginLeft: '5px', background: '#f0883e', color: '#fff', borderRadius: '8px', fontSize: '0.6rem', padding: '0 5px', fontWeight: 'bold', lineHeight: '16px', flexShrink: 0 }}>
+                {warnCount}
+            </span>
+        ) : null;
+
         if (duplicates.length > 1) {
             const parts = filePath.split('/');
             if (parts.length > 1) {
-                const parentDir = parts[parts.length - 2];
                 return (
-                    <span style={{ display: 'flex', alignItems: 'baseline' }}>
+                    <span style={{ display: 'flex', alignItems: 'center' }}>
                         {fileName}
-                        <span style={{ fontSize: '0.85em', color: 'var(--text-muted)', marginLeft: '6px', fontWeight: 'normal' }}>{parentDir}/</span>
+                        <span style={{ fontSize: '0.85em', color: 'var(--text-muted)', marginLeft: '6px', fontWeight: 'normal' }}>{parts[parts.length - 2]}/</span>
+                        {badge}
                     </span>
                 );
             }
         }
-        return <span>{fileName}</span>;
+        return <span style={{ display: 'flex', alignItems: 'center' }}>{fileName}{badge}</span>;
     };
+
+    const activeFileErrors = editorErrors[activeFile] || [];
 
     return (
         <div className="app-container">
-            
-            {/* --- NEW: Secrets Management Modal --- */}
             {isSecretsModalOpen && (
                 <div className="modal-overlay">
                     <div className="custom-modal" style={{ width: '450px' }}>
@@ -763,65 +860,28 @@ const CodeEditor = () => {
                             <button className="btn btn-icon" onClick={() => setIsSecretsModalOpen(false)} style={{ background: 'transparent', color: 'var(--text-muted)' }}>&times;</button>
                         </div>
                         <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '20px', lineHeight: '1.4' }}>
-                            Add environment variables (like API keys) here. They will be securely injected when you run your code and won't be saved in your files.
+                            Add environment variables here. They will be securely injected when you run your code and won't be saved in your files.
                         </p>
-
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '250px', overflowY: 'auto', marginBottom: '15px', paddingRight: '5px' }}>
                             {secrets.map((secret, index) => (
                                 <div key={index} style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                                    <input
-                                        type="text"
-                                        className="modal-input modern-input"
-                                        placeholder="KEY (e.g. OPENAI_API_KEY)"
-                                        value={secret.key}
-                                        onChange={(e) => {
-                                            const newSecrets = [...secrets];
-                                            newSecrets[index].key = e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, '');
-                                            setSecrets(newSecrets);
-                                        }}
-                                        style={{ flex: 1, textTransform: 'uppercase', fontSize: '0.85rem' }}
-                                    />
-                                    <input
-                                        type="password"
-                                        className="modal-input modern-input"
-                                        placeholder="VALUE"
-                                        value={secret.value}
-                                        onChange={(e) => {
-                                            const newSecrets = [...secrets];
-                                            newSecrets[index].value = e.target.value;
-                                            setSecrets(newSecrets);
-                                        }}
-                                        style={{ flex: 1, fontSize: '0.85rem' }}
-                                    />
-                                    <button
-                                        className="btn btn-icon"
-                                        onClick={() => {
-                                            const newSecrets = secrets.filter((_, i) => i !== index);
-                                            setSecrets(newSecrets.length ? newSecrets : [{ key: '', value: '' }]);
-                                        }}
-                                        style={{ color: '#ff6b6b', background: 'transparent', padding: '4px' }}
-                                        title="Remove Secret"
-                                    >
+                                    <input type="text" className="modal-input modern-input" placeholder="KEY" value={secret.key}
+                                        onChange={(e) => { const n = [...secrets]; n[index].key = e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, ''); setSecrets(n); }}
+                                        style={{ flex: 1, fontSize: '0.85rem' }} />
+                                    <input type="password" className="modal-input modern-input" placeholder="VALUE" value={secret.value}
+                                        onChange={(e) => { const n = [...secrets]; n[index].value = e.target.value; setSecrets(n); }}
+                                        style={{ flex: 1, fontSize: '0.85rem' }} />
+                                    <button className="btn btn-icon" onClick={() => { const n = secrets.filter((_, i) => i !== index); setSecrets(n.length ? n : [{ key: '', value: '' }]); }}
+                                        style={{ color: '#ff6b6b', background: 'transparent', padding: '4px' }}>
                                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
                                     </button>
                                 </div>
                             ))}
                         </div>
-
-                        <button
-                            className="btn btn-secondary"
-                            onClick={() => setSecrets([...secrets, { key: '', value: '' }])}
-                            style={{ width: '100%', marginBottom: '20px', padding: '8px', fontSize: '0.85rem' }}
-                        >
-                            + Add Variable
-                        </button>
-
+                        <button className="btn btn-secondary" onClick={() => setSecrets([...secrets, { key: '', value: '' }])} style={{ width: '100%', marginBottom: '20px', fontSize: '0.85rem' }}>+ Add Variable</button>
                         <div className="modal-actions">
                             <button className="btn btn-secondary" onClick={() => setIsSecretsModalOpen(false)}>Cancel</button>
-                            <button className="btn btn-primary" onClick={() => {
-                                toast.success("Secrets ready for execution!", { icon: '🔒' });
-                                setIsSecretsModalOpen(false);
-                            }}>Done</button>
+                            <button className="btn btn-primary" onClick={() => { toast.success("Secrets ready!", { icon: '🔒' }); setIsSecretsModalOpen(false); }}>Done</button>
                         </div>
                     </div>
                 </div>
@@ -833,37 +893,16 @@ const CodeEditor = () => {
                         <h3>Create New File</h3>
                         <div className="modal-field">
                             <label>Language</label>
-                            <select 
-                                className="modal-input modern-input" 
-                                value={newFileLang} 
-                                onChange={(e) => {
-                                    setNewFileLang(e.target.value);
-                                    if (!newFileName || newFileName.includes('.')) {
-                                        setNewFileName(`src/NewFile.${getExtension(e.target.value)}`);
-                                    }
-                                }}
-                            >
-                                <option value="java">Java</option>
-                                <option value="python">Python</option>
-                                <option value="cpp">C++</option>
-                                <option value="javascript">JavaScript</option>
-                                <option value="typescript">TypeScript</option>
-                                <option value="go">Go</option>
-                                <option value="rust">Rust</option>
-                                <option value="markdown">Markdown</option>
+                            <select className="modal-input modern-input" value={newFileLang} onChange={(e) => { setNewFileLang(e.target.value); if (!newFileName || newFileName.includes('.')) setNewFileName(`src/NewFile.${getExtension(e.target.value)}`); }}>
+                                <option value="java">Java</option><option value="python">Python</option><option value="cpp">C++</option>
+                                <option value="javascript">JavaScript</option><option value="typescript">TypeScript</option>
+                                <option value="go">Go</option><option value="rust">Rust</option><option value="markdown">Markdown</option>
                             </select>
                         </div>
                         <div className="modal-field">
                             <label>File Name (Use slashes for folders)</label>
-                            <input 
-                                type="text" 
-                                className="modal-input modern-input"
-                                value={newFileName} 
-                                onChange={(e) => setNewFileName(e.target.value)} 
-                                placeholder={`e.g. src/utils/script.${getExtension(newFileLang)}`}
-                                onKeyDown={(e) => e.key === 'Enter' && handleCreateNewFile()}
-                                autoFocus
-                            />
+                            <input type="text" className="modal-input modern-input" value={newFileName} onChange={(e) => setNewFileName(e.target.value)}
+                                placeholder={`e.g. src/utils/script.${getExtension(newFileLang)}`} onKeyDown={(e) => e.key === 'Enter' && handleCreateNewFile()} autoFocus />
                         </div>
                         <div className="modal-actions">
                             <button className="btn btn-secondary" onClick={() => setIsModalOpen(false)}>Cancel</button>
@@ -878,8 +917,8 @@ const CodeEditor = () => {
                     <div className="custom-modal">
                         <h3>Delete File</h3>
                         <p style={{color: 'var(--text-muted)', fontSize: '0.9rem', margin: '5px 0 15px 0', lineHeight: '1.4'}}>
-                            Are you sure you want to delete <strong>{fileToDelete}</strong>? <br/><br/>
-                            This action cannot be undone and will delete the file for everyone currently in the room.
+                            Are you sure you want to delete <strong>{fileToDelete}</strong>?<br/><br/>
+                            This action cannot be undone and will delete the file for everyone in the room.
                         </p>
                         <div className="modal-actions">
                             <button className="btn btn-secondary" onClick={() => setIsDeleteModalOpen(false)}>Cancel</button>
@@ -889,10 +928,8 @@ const CodeEditor = () => {
                 </div>
             )}
 
-            {/* --- SIDEBAR CONTAINER WITH FLEX COLUMN --- */}
+            {/* SIDEBAR */}
             <div className={`sidebar ${isSidebarOpen ? 'open' : 'closed'}`} style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-                
-                {/* Brand Header */}
                 <div className="sidebar-header" style={{ flexShrink: 0 }}>
                     <div className="brand-logo">
                         <span className="brand-prompt">&gt;</span><span>Vylop</span><span className="brand-cursor"></span>
@@ -902,20 +939,13 @@ const CodeEditor = () => {
                     </button>
                 </div>
 
-                {/* Main Explorer Title */}
-                <div style={{ padding: '12px 15px 4px', fontSize: '0.7rem', color: '#8b949e', letterSpacing: '1px', flexShrink: 0 }}>
-                    EXPLORER
-                </div>
+                <div style={{ padding: '12px 15px 4px', fontSize: '0.7rem', color: '#8b949e', letterSpacing: '1px', flexShrink: 0 }}>EXPLORER</div>
 
-                {/* Scrollable Panels Area */}
                 <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-                    
                     {/* Files Panel */}
                     <div style={{ display: 'flex', flexDirection: 'column', flex: isExplorerExpanded ? '1 1 0%' : '0 0 auto', minHeight: 0 }}>
-                        <div 
-                            onClick={() => setIsExplorerExpanded(!isExplorerExpanded)}
-                            style={{ padding: '4px 15px', cursor: 'pointer', display: 'flex', alignItems: 'center', fontSize: '0.65rem', fontWeight: 'bold', color: 'var(--text-main)', letterSpacing: '0.5px', textTransform: 'uppercase', userSelect: 'none' }}
-                        >
+                        <div onClick={() => setIsExplorerExpanded(!isExplorerExpanded)}
+                            style={{ padding: '4px 15px', cursor: 'pointer', display: 'flex', alignItems: 'center', fontSize: '0.65rem', fontWeight: 'bold', color: 'var(--text-main)', letterSpacing: '0.5px', textTransform: 'uppercase', userSelect: 'none' }}>
                             <svg style={{ marginRight: '4px', transform: isExplorerExpanded ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.1s' }} width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
                             FILES
                         </div>
@@ -928,10 +958,8 @@ const CodeEditor = () => {
 
                     {/* Online Users Panel */}
                     <div style={{ display: 'flex', flexDirection: 'column', flex: isOnlineExpanded ? '0 1 auto' : '0 0 auto', maxHeight: '35%', minHeight: 0 }}>
-                        <div 
-                            onClick={() => setIsOnlineExpanded(!isOnlineExpanded)}
-                            style={{ padding: '4px 15px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '0.65rem', fontWeight: 'bold', color: 'var(--text-main)', letterSpacing: '0.5px', textTransform: 'uppercase', userSelect: 'none', borderTop: '1px solid transparent' }}
-                        >
+                        <div onClick={() => setIsOnlineExpanded(!isOnlineExpanded)}
+                            style={{ padding: '4px 15px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '0.65rem', fontWeight: 'bold', color: 'var(--text-main)', letterSpacing: '0.5px', textTransform: 'uppercase', userSelect: 'none', borderTop: '1px solid transparent' }}>
                             <div style={{display: 'flex', alignItems: 'center'}}>
                                 <svg style={{ marginRight: '4px', transform: isOnlineExpanded ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.1s' }} width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
                                 ONLINE ({users.length})
@@ -941,15 +969,7 @@ const CodeEditor = () => {
                         {isOnlineExpanded && (
                             <div className="users-container" style={{ overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px', padding: '10px 15px' }}>
                                 {users.map((u, i) => (
-                                    <div key={i} style={{ 
-                                        backgroundColor: 'rgba(255, 255, 255, 0.03)', 
-                                        borderRadius: '8px', 
-                                        padding: '10px', 
-                                        border: '1px solid rgba(255, 255, 255, 0.08)',
-                                        display: 'flex',
-                                        flexDirection: 'column',
-                                        gap: '10px'
-                                    }}>
+                                    <div key={i} style={{ backgroundColor: 'rgba(255,255,255,0.03)', borderRadius: '8px', padding: '10px', border: '1px solid rgba(255,255,255,0.08)', display: 'flex', flexDirection: 'column', gap: '10px' }}>
                                         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                                             <div style={{ width: '30px', height: '30px', borderRadius: '6px', backgroundColor: getUserColor(u.username), display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', color: '#fff', fontSize: '14px', flexShrink: 0 }}>
                                                 {u.username.charAt(0).toUpperCase()}
@@ -959,21 +979,16 @@ const CodeEditor = () => {
                                                     <span style={{ fontSize: '0.85rem', fontWeight: '600', color: '#e1e4e8', maxWidth: '100px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{u.username}</span>
                                                     <span style={{ width: '6px', height: '6px', backgroundColor: '#2ea043', borderRadius: '50%', flexShrink: 0 }}></span>
                                                 </div>
-                                                <div>
-                                                    <span style={{ fontSize: '0.6rem', fontWeight: '700', padding: '2px 4px', borderRadius: '3px', backgroundColor: u.role === 'HOST' ? 'rgba(210, 153, 34, 0.15)' : u.role === 'EDITOR' ? 'rgba(46, 160, 67, 0.15)' : 'rgba(139, 148, 158, 0.15)', color: u.role === 'HOST' ? '#d29922' : u.role === 'EDITOR' ? '#3fb950' : '#8b949e' }}>
-                                                        {u.role}
-                                                    </span>
-                                                </div>
+                                                <span style={{ fontSize: '0.6rem', fontWeight: '700', padding: '2px 4px', borderRadius: '3px', backgroundColor: u.role === 'HOST' ? 'rgba(210,153,34,0.15)' : u.role === 'EDITOR' ? 'rgba(46,160,67,0.15)' : 'rgba(139,148,158,0.15)', color: u.role === 'HOST' ? '#d29922' : u.role === 'EDITOR' ? '#3fb950' : '#8b949e' }}>{u.role}</span>
                                             </div>
                                         </div>
                                         {isHost && u.username !== username && (
                                             <div style={{ display: 'flex', gap: '6px', paddingTop: '8px', borderTop: '1px dashed rgba(255,255,255,0.1)' }}>
-                                                {u.role === 'READ_ONLY' ? (
-                                                    <button onClick={() => changeUserRole(u.username, 'EDITOR')} style={{ flex: 1, fontSize: '0.7rem', padding: '4px', background: 'rgba(46, 160, 67, 0.1)', color: '#3fb950', border: '1px solid rgba(46, 160, 67, 0.3)', borderRadius: '4px', cursor: 'pointer' }}>↑ Promote</button>
-                                                ) : (
-                                                    <button onClick={() => changeUserRole(u.username, 'READ_ONLY')} style={{ flex: 1, fontSize: '0.7rem', padding: '4px', background: 'rgba(210, 153, 34, 0.1)', color: '#d29922', border: '1px solid rgba(210, 153, 34, 0.3)', borderRadius: '4px', cursor: 'pointer' }}>↓ Demote</button>
-                                                )}
-                                                <button onClick={() => kickTargetUser(u.username)} style={{ flex: 0.6, fontSize: '0.7rem', padding: '4px', background: 'rgba(218, 54, 51, 0.1)', color: '#da3633', border: '1px solid rgba(218, 54, 51, 0.3)', borderRadius: '4px', cursor: 'pointer' }}>✕ Kick</button>
+                                                {u.role === 'READ_ONLY'
+                                                    ? <button onClick={() => changeUserRole(u.username, 'EDITOR')} style={{ flex: 1, fontSize: '0.7rem', padding: '4px', background: 'rgba(46,160,67,0.1)', color: '#3fb950', border: '1px solid rgba(46,160,67,0.3)', borderRadius: '4px', cursor: 'pointer' }}>↑ Promote</button>
+                                                    : <button onClick={() => changeUserRole(u.username, 'READ_ONLY')} style={{ flex: 1, fontSize: '0.7rem', padding: '4px', background: 'rgba(210,153,34,0.1)', color: '#d29922', border: '1px solid rgba(210,153,34,0.3)', borderRadius: '4px', cursor: 'pointer' }}>↓ Demote</button>
+                                                }
+                                                <button onClick={() => kickTargetUser(u.username)} style={{ flex: 0.6, fontSize: '0.7rem', padding: '4px', background: 'rgba(218,54,51,0.1)', color: '#da3633', border: '1px solid rgba(218,54,51,0.3)', borderRadius: '4px', cursor: 'pointer' }}>✕ Kick</button>
                                             </div>
                                         )}
                                     </div>
@@ -984,10 +999,8 @@ const CodeEditor = () => {
 
                     {/* Chat Panel */}
                     <div style={{ display: 'flex', flexDirection: 'column', flex: isChatExpanded ? '1 1 0%' : '0 0 auto', minHeight: 0 }}>
-                        <div 
-                            onClick={() => setIsChatExpanded(!isChatExpanded)}
-                            style={{ padding: '4px 15px', cursor: 'pointer', display: 'flex', alignItems: 'center', fontSize: '0.65rem', fontWeight: 'bold', color: 'var(--text-main)', letterSpacing: '0.5px', textTransform: 'uppercase', userSelect: 'none', borderTop: '1px solid transparent' }}
-                        >
+                        <div onClick={() => setIsChatExpanded(!isChatExpanded)}
+                            style={{ padding: '4px 15px', cursor: 'pointer', display: 'flex', alignItems: 'center', fontSize: '0.65rem', fontWeight: 'bold', color: 'var(--text-main)', letterSpacing: '0.5px', textTransform: 'uppercase', userSelect: 'none', borderTop: '1px solid transparent' }}>
                             <svg style={{ marginRight: '4px', transform: isChatExpanded ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.1s' }} width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
                             CHAT
                         </div>
@@ -1017,13 +1030,13 @@ const CodeEditor = () => {
                     </div>
                 </div>
 
-                {/* --- FOOTER (Always at bottom) --- */}
                 <div style={{ flexShrink: 0, marginTop: 'auto', borderTop: '1px solid var(--border)', padding: '15px', display: 'flex', gap: '10px' }}>
                     <button className="btn btn-secondary" style={{flex:1, padding: '8px', fontSize: '0.85rem'}} onClick={copyRoomLink}>Copy Link</button>
                     <button className="btn btn-danger" style={{flex:1, padding: '8px', fontSize: '0.85rem'}} onClick={() => navigate('/')}>Leave</button>
                 </div>
             </div>
 
+            {/* MAIN AREA */}
             <div className="main-area">
                 <div className="toolbar">
                     <div className="toolbar-group">
@@ -1032,98 +1045,44 @@ const CodeEditor = () => {
                         </button>
                         <span style={{fontWeight: 'bold', fontSize: '0.9rem', color: 'var(--text-main)'}}>{roomName}</span>
                     </div>
-                    
                     <div className="toolbar-group right-controls">
                         {files[activeFile]?.language === "markdown" && (
-                            <button 
-                                className={`btn btn-icon ${showMarkdownPreview ? 'btn-primary' : 'btn-secondary'}`} 
-                                onClick={() => setShowMarkdownPreview(!showMarkdownPreview)} 
-                                title="Toggle Markdown Preview"
-                                style={{marginRight: '10px'}}
-                            >
+                            <button className={`btn btn-icon ${showMarkdownPreview ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setShowMarkdownPreview(!showMarkdownPreview)} title="Toggle Markdown Preview" style={{marginRight: '10px'}}>
                                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
                             </button>
                         )}
-
-                        <button 
-                            className={`btn btn-secondary btn-icon ${!canEdit ? 'opacity-50 cursor-not-allowed' : ''}`} 
-                            onClick={() => canEdit && setIsModalOpen(true)} 
-                            title={!canEdit ? getTooltip('EDITOR') : "New File"}
-                            disabled={!canEdit}
-                        >
+                        <button className={`btn btn-secondary btn-icon ${!canEdit ? 'opacity-50 cursor-not-allowed' : ''}`} onClick={() => canEdit && setIsModalOpen(true)} title={!canEdit ? getTooltip('EDITOR') : "New File"} disabled={!canEdit}>
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="12" y1="18" x2="12" y2="12"></line><line x1="9" y1="15" x2="15" y2="15"></line></svg>
                         </button>
-
-                        {/* --- NEW: Secrets Modal Button --- */}
-                        <button 
-                            className={`btn btn-secondary btn-icon ${!canEdit ? 'opacity-50 cursor-not-allowed' : ''}`} 
-                            onClick={() => canEdit && setIsSecretsModalOpen(true)} 
-                            title={!canEdit ? getTooltip('EDITOR') : "Environment Secrets"}
-                            disabled={!canEdit}
-                        >
+                        <button className={`btn btn-secondary btn-icon ${!canEdit ? 'opacity-50 cursor-not-allowed' : ''}`} onClick={() => canEdit && setIsSecretsModalOpen(true)} title={!canEdit ? getTooltip('EDITOR') : "Environment Secrets"} disabled={!canEdit}>
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
                         </button>
-
-                        <button 
-                            className={`btn btn-secondary btn-icon ${(!isHost || isSaving) ? 'opacity-50 cursor-not-allowed' : ''}`} 
-                            onClick={() => isHost && saveWorkspace()} 
-                            disabled={!isHost || isSaving} 
-                            title={!isHost ? getTooltip('HOST') : "Save to Cloud"}
-                        >
+                        <button className={`btn btn-secondary btn-icon ${(!isHost || isSaving) ? 'opacity-50 cursor-not-allowed' : ''}`} onClick={() => isHost && saveWorkspace()} disabled={!isHost || isSaving} title={!isHost ? getTooltip('HOST') : "Save to Cloud"}>
                             {isSaving ? <svg className="spinner" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M12 2v4m0 12v4M4.93 4.93l2.83 2.83m8.48 8.48l2.83 2.83M2 12h4m12 0h4M4.93 19.07l2.83-2.83m8.48-8.48l2.83-2.83" /></svg> : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>}
                         </button>
-
-                        <button className="btn btn-secondary btn-icon" onClick={downloadWorkspace} title="Export Workspace as .zip">
+                        <button className="btn btn-secondary btn-icon" onClick={downloadWorkspace} title="Export as .zip">
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
                         </button>
-
                         <div className="toolbar-divider"></div>
-
-                        <button 
-                            className={`btn btn-secondary btn-icon ${!canEdit || !activeFile ? 'opacity-50 cursor-not-allowed' : ''}`} 
-                            onClick={(e) => canEdit && activeFile && handleDeleteIconClick(e, activeFile)} 
-                            disabled={!canEdit || !activeFile}
-                            title={!canEdit ? getTooltip('EDITOR') : "Delete Current File"}
-                        >
+                        <button className={`btn btn-secondary btn-icon ${(!canEdit || !activeFile) ? 'opacity-50 cursor-not-allowed' : ''}`} onClick={(e) => canEdit && activeFile && handleDeleteIconClick(e, activeFile)} disabled={!canEdit || !activeFile} title={!canEdit ? getTooltip('EDITOR') : "Delete Current File"}>
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
                         </button>
-
-                        <button 
-                            className={`btn btn-secondary btn-icon ${!canEdit || !activeFile ? 'opacity-50 cursor-not-allowed' : ''}`} 
-                            onClick={() => canEdit && activeFile && formatCode()} 
-                            disabled={!canEdit || !activeFile}
-                            title={!canEdit ? getTooltip('EDITOR') : "Format Code"}
-                        >
+                        <button className={`btn btn-secondary btn-icon ${(!canEdit || !activeFile) ? 'opacity-50 cursor-not-allowed' : ''}`} onClick={() => canEdit && activeFile && formatCode()} disabled={!canEdit || !activeFile} title={!canEdit ? getTooltip('EDITOR') : "Format Code"}>
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="21" y1="10" x2="3" y2="10"></line><line x1="21" y1="6" x2="3" y2="6"></line><line x1="21" y1="14" x2="3" y2="14"></line><line x1="21" y1="18" x2="3" y2="18"></line></svg>
                         </button>
-                        
                         <button className={`btn btn-icon ${isVimMode ? 'btn-primary' : 'btn-secondary'}`} onClick={toggleVimMode} title={isVimMode ? "Disable Vim Mode" : "Enable Vim Mode"}>
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="4 17 10 11 4 5"></polyline><line x1="12" y1="19" x2="20" y2="19"></line></svg>
                         </button>
-
                         <div className="toolbar-divider"></div>
-
                         <select className="lang-select" value={editorTheme} onChange={handleThemeChange} title="Select Theme" style={{marginRight: '10px'}}>
                             <option value="vs-dark">Dark Theme</option>
                             <option value="light">Light Theme</option>
                             <option value="hc-black">High Contrast</option>
                         </select>
-
-                        <select 
-                            className={`lang-select ${!isHost || !activeFile ? 'opacity-50 cursor-not-allowed' : ''}`} 
-                            value={activeFile ? files[activeFile]?.language : "java"} 
-                            onChange={handleLanguageSelect} 
-                            disabled={!isHost || !activeFile}
-                            title={!isHost ? getTooltip('HOST') : "Select Language"}
-                        >
-                            <option value="java">Java</option>
-                            <option value="python">Python</option>
-                            <option value="cpp">C++</option>
-                            <option value="javascript">JavaScript</option>
-                            <option value="typescript">TypeScript</option>
-                            <option value="go">Go</option>
-                            <option value="rust">Rust</option>
-                            <option value="markdown">Markdown</option>
+                        <select className={`lang-select ${(!isHost || !activeFile) ? 'opacity-50 cursor-not-allowed' : ''}`} value={activeFile ? files[activeFile]?.language : "java"} onChange={handleLanguageSelect} disabled={!isHost || !activeFile} title={!isHost ? getTooltip('HOST') : "Select Language"}>
+                            <option value="java">Java</option><option value="python">Python</option><option value="cpp">C++</option>
+                            <option value="javascript">JavaScript</option><option value="typescript">TypeScript</option>
+                            <option value="go">Go</option><option value="rust">Rust</option><option value="markdown">Markdown</option>
                         </select>
                         <button className="btn btn-primary btn-icon" onClick={runCode} disabled={isRunning || !activeFile} title="Run Code">
                             {isRunning ? <svg className="spinner" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M12 2v4m0 12v4M4.93 4.93l2.83 2.83m8.48 8.48l2.83 2.83M2 12h4m12 0h4M4.93 19.07l2.83-2.83m8.48-8.48l2.83-2.83" /></svg> : <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>}
@@ -1131,6 +1090,7 @@ const CodeEditor = () => {
                     </div>
                 </div>
 
+                {/* File Tabs */}
                 <div className="file-tabs">
                     {openFiles.map((fileName) => (
                         <div key={fileName} className={`file-tab ${activeFile === fileName ? 'active' : ''}`} onClick={() => setActiveFile(fileName)}>
@@ -1138,13 +1098,7 @@ const CodeEditor = () => {
                                 {getFileIcon(fileName.split('/').pop())}
                                 {renderTabName(fileName)}
                             </span>
-                            <span 
-                                className="file-tab-close" 
-                                onClick={(e) => handleCloseTab(e, fileName)}
-                                title="Close Tab"
-                            >
-                                &times;
-                            </span>
+                            <span className="file-tab-close" onClick={(e) => handleCloseTab(e, fileName)} title="Close Tab">&times;</span>
                         </div>
                     ))}
                 </div>
@@ -1157,27 +1111,11 @@ const CodeEditor = () => {
                     </div>
                 ) : (
                     <Split className={`editor-split ${splitDirection}`} sizes={[70, 30]} minSize={250} gutterSize={8} direction={splitDirection}>
-                        <div className="editor-wrapper">
+                        <div className="editor-wrapper" style={{ display: 'flex', flexDirection: 'column', position: 'relative' }}>
                             {showMarkdownPreview && files[activeFile]?.language === "markdown" ? (
-                                <Split className="markdown-split" sizes={[50, 50]} minSize={100} gutterSize={8} direction="horizontal" style={{ display: 'flex', height: '100%' }}>
+                                <Split className="markdown-split" sizes={[50, 50]} minSize={100} gutterSize={8} direction="horizontal" style={{ display: 'flex', flex: 1 }}>
                                     <div style={{ height: '100%' }}>
-                                        <Editor 
-                                            height="100%" 
-                                            language="markdown" 
-                                            theme={editorTheme}
-                                            value={files[activeFile]?.value || ""} 
-                                            onMount={handleEditorDidMount} 
-                                            onChange={handleEditorChange} 
-                                            options={{ 
-                                                readOnly: !canEdit,
-                                                domReadOnly: !canEdit,
-                                                minimap: { enabled: false }, 
-                                                fontSize: 14, 
-                                                fontFamily: 'JetBrains Mono', 
-                                                automaticLayout: true,
-                                                wordWrap: 'on' 
-                                            }} 
-                                        />
+                                        <Editor height="100%" language="markdown" theme={editorTheme} value={files[activeFile]?.value || ""} onMount={handleEditorDidMount} onChange={handleEditorChange} options={{ readOnly: !canEdit, domReadOnly: !canEdit, minimap: { enabled: false }, fontSize: 14, fontFamily: 'JetBrains Mono', automaticLayout: true, wordWrap: 'on', hover: { above: false }, fixedOverflowWidgets: true }} />
                                     </div>
                                     <div className="markdown-preview" style={{ height: '100%', overflowY: 'auto', padding: '20px', backgroundColor: 'var(--bg-dark)', color: 'var(--text-main)' }}>
                                         <ReactMarkdown>{files[activeFile]?.value || ""}</ReactMarkdown>
@@ -1185,28 +1123,38 @@ const CodeEditor = () => {
                                 </Split>
                             ) : (
                                 <div style={{ flex: 1, minHeight: 0, height: '100%' }}>
-                                    <Editor 
-                                        height="100%" 
-                                        language={files[activeFile]?.language === "cpp" ? "cpp" : files[activeFile]?.language} 
-                                        theme={editorTheme}
-                                        value={files[activeFile]?.value || ""} 
-                                        onMount={handleEditorDidMount} 
-                                        onChange={handleEditorChange} 
-                                        options={{ 
-                                            readOnly: !canEdit,
-                                            domReadOnly: !canEdit,
-                                            minimap: { enabled: false }, 
-                                            fontSize: 14, 
-                                            fontFamily: 'JetBrains Mono', 
-                                            automaticLayout: true, 
-                                            formatOnPaste: true 
-                                        }} 
-                                    />
+                                    <Editor height="100%" language={files[activeFile]?.language === "cpp" ? "cpp" : files[activeFile]?.language} theme={editorTheme} value={files[activeFile]?.value || ""} onMount={handleEditorDidMount} onChange={handleEditorChange}
+                                        options={{ readOnly: !canEdit, domReadOnly: !canEdit, minimap: { enabled: false }, fontSize: 14, fontFamily: 'JetBrains Mono', automaticLayout: true, formatOnPaste: true, glyphMargin: true, hover: { above: false }, fixedOverflowWidgets: true }} />
                                 </div>
                             )}
                             <div id="vim-status-bar" className="vim-status-bar"></div>
+
+                            {/* Error Panel — absolute overlay so editor height never changes */}
+                            {activeFileErrors.length > 0 && (
+                                <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, maxHeight: '140px', overflowY: 'auto', backgroundColor: '#0d1117ee', borderTop: '1px solid #ff6b6b44', backdropFilter: 'blur(4px)', zIndex: 10 }}>
+                                    <div style={{ padding: '4px 12px', fontSize: '0.65rem', color: '#ff6b6b', letterSpacing: '0.5px', fontWeight: 'bold', textTransform: 'uppercase', display: 'flex', justifyContent: 'space-between', alignItems: 'center', position: 'sticky', top: 0, backgroundColor: '#0d1117ee', zIndex: 1 }}>
+                                        <span>
+                                            {activeFileErrors.filter(e => e.severity === 'error').length > 0 && `🔴 ${activeFileErrors.filter(e => e.severity === 'error').length} error${activeFileErrors.filter(e => e.severity === 'error').length > 1 ? 's' : ''}`}
+                                            {activeFileErrors.filter(e => e.severity === 'warning').length > 0 && `  🟡 ${activeFileErrors.filter(e => e.severity === 'warning').length} warning${activeFileErrors.filter(e => e.severity === 'warning').length > 1 ? 's' : ''}`}
+                                        </span>
+                                        <button onClick={() => setEditorErrors(prev => { const n = { ...prev }; delete n[activeFile]; return n; })}
+                                            style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '0.75rem' }}>
+                                            ✕ Clear
+                                        </button>
+                                    </div>
+                                    {activeFileErrors.map((err, i) => (
+                                        <div key={i} onClick={() => handleJumpToLine(activeFile, err.line)}
+                                            style={{ padding: '3px 12px', fontSize: '0.78rem', fontFamily: 'JetBrains Mono, monospace', cursor: 'pointer', display: 'flex', gap: '10px', alignItems: 'baseline', color: getSeverityColor(err.severity) }}
+                                            title={`Jump to line ${err.line}`}>
+                                            <span style={{ flexShrink: 0, opacity: 0.7 }}>Line {err.line}</span>
+                                            <span style={{ color: 'var(--text-muted)', flexShrink: 0 }}>—</span>
+                                            <span>{err.message}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
                         </div>
-                        
+
                         <div className="io-wrapper">
                             <div className="io-container">
                                 <div className="io-header"><span>STDIN (Input)</span></div>
