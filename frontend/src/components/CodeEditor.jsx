@@ -217,7 +217,8 @@ const CodeEditor = () => {
     const stompClient = useRef(null);
     const isConnected = useRef(false);
     const notifiedUsers = useRef(new Set()); 
-    const pendingCursors = useRef({}); 
+    const pendingCursors = useRef({});
+    const isLocalChange = useRef(false);
     const userColorMap = useRef({});
     const nextColorIndex = useRef(0);
     const disconnectTimeoutRef = useRef(null); 
@@ -482,12 +483,12 @@ const CodeEditor = () => {
                             if (activeFile === body.fileName) setActiveFile(n.length > 0 ? n[n.length - 1] : null);
                             return n;
                         });
-                        // Clear errors for deleted file
                         setEditorErrors(prev => { const n = { ...prev }; delete n[body.fileName]; return n; });
                         if (body.sender !== username) toast(`${body.sender} deleted ${body.fileName}`, { icon: '🗑️' });
-                    } else if (body.sender !== username) {
+                    } else if (!isLocalChange.current) {
                         setFiles(prev => ({ ...prev, [body.fileName]: { name: body.fileName, language: body.language, value: body.content } }));
                     }
+                    isLocalChange.current = false;
                 });
 
                 client.subscribe(`/topic/users/${roomId}`, (msg) => {
@@ -627,6 +628,7 @@ const CodeEditor = () => {
 
     const handleEditorChange = (value) => {
         if (stompClient.current?.connected && canEdit && activeFile) {
+            isLocalChange.current = true;
             setFiles(prev => ({ ...prev, [activeFile]: { ...prev[activeFile], value } }));
             stompClient.current.send(`/app/code/${roomId}`, {}, JSON.stringify({ sender: username, content: value, language: files[activeFile].language, type: "CODE", fileName: activeFile }));
             // Clear errors for this file as the user edits — they'll be recalculated on next run
