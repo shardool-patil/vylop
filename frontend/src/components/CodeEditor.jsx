@@ -41,101 +41,111 @@ const getLanguageFromExtension = (fileName) => {
 
 const CURSOR_COLORS = ['#FF007F', '#00E5FF', '#FFD700', '#00FF00', '#9D00FF', '#FF7F50', '#00BFFF', '#FF1493'];
 
-// ─── Error Parsers ───────────────────────────────────────────────────────────
-// Each returns: [{ fileName, line, col, message, severity }]
+// ─── Key fix: resolve rawFile from parser output to the full path used in files state ──
+// e.g. "Main.java" → "src/Main.java"
+const resolveFileName = (rawFile, files) => {
+    if (!rawFile) return rawFile;
+    // Exact match first
+    if (files[rawFile]) return rawFile;
+    // Strip leading ./ or /
+    const cleaned = rawFile.replace(/^\.\//, '').replace(/^\//, '');
+    if (files[cleaned]) return cleaned;
+    // Find by suffix match — "Main.java" matches "src/Main.java"
+    const match = Object.keys(files).find(f =>
+        f.endsWith('/' + cleaned) || f.endsWith('\\' + cleaned) || f === cleaned
+    );
+    return match || rawFile;
+};
+
+// ─── Error Parsers — each returns [{ fileName, line, col, message, severity }] ──
 
 const parseJavaErrors = (output, files) => {
     const errors = [];
-    // javac: Main.java:12: error: ';' expected
     const regex = /([a-zA-Z0-9_/\\.-]+\.java):(\d+):\s*(error|warning):\s*(.+)/g;
     let match;
     while ((match = regex.exec(output)) !== null) {
-        const rawFile = match[1];
-        const line = parseInt(match[2], 10);
-        const severity = match[3] === 'error' ? 'error' : 'warning';
-        const message = match[4].trim();
-        // Try to match to an open file
-        const fileName = Object.keys(files).find(f => f.endsWith(rawFile) || f.includes(rawFile)) || rawFile;
-        errors.push({ fileName, line, col: 1, message, severity });
+        errors.push({
+            fileName: resolveFileName(match[1], files),
+            line: parseInt(match[2], 10),
+            col: 1,
+            message: match[4].trim(),
+            severity: match[3] === 'error' ? 'error' : 'warning',
+        });
     }
     return errors;
 };
 
 const parsePythonErrors = (output, files) => {
     const errors = [];
-    // File "src/main.py", line 12
     const regex = /File "([^"]+)",\s*line\s*(\d+)/g;
-    // Also match: SyntaxError: invalid syntax
     const msgRegex = /^(\w+Error|\w+Exception):\s*(.+)/m;
     let match;
     while ((match = regex.exec(output)) !== null) {
-        const rawFile = match[1];
-        const line = parseInt(match[2], 10);
         const msgMatch = output.slice(match.index).match(msgRegex);
-        const message = msgMatch ? `${msgMatch[1]}: ${msgMatch[2]}` : 'Error';
-        const fileName = Object.keys(files).find(f => f.endsWith(rawFile) || rawFile.endsWith(f) || f.includes(rawFile.replace('./', ''))) || rawFile;
-        errors.push({ fileName, line, col: 1, message, severity: 'error' });
+        errors.push({
+            fileName: resolveFileName(match[1], files),
+            line: parseInt(match[2], 10),
+            col: 1,
+            message: msgMatch ? `${msgMatch[1]}: ${msgMatch[2]}` : 'Error',
+            severity: 'error',
+        });
     }
     return errors;
 };
 
 const parseCppErrors = (output, files) => {
     const errors = [];
-    // filename.cpp:12:5: error: 'x' was not declared
     const regex = /([a-zA-Z0-9_/\\.-]+\.(?:cpp|cc|h|hpp)):(\d+):(\d+):\s*(error|warning|note):\s*(.+)/g;
     let match;
     while ((match = regex.exec(output)) !== null) {
-        const rawFile = match[1];
-        const line = parseInt(match[2], 10);
-        const col = parseInt(match[3], 10);
-        const severity = match[4] === 'error' ? 'error' : match[4] === 'warning' ? 'warning' : 'info';
-        const message = match[5].trim();
-        const fileName = Object.keys(files).find(f => f.endsWith(rawFile) || f.includes(rawFile)) || rawFile;
-        errors.push({ fileName, line, col, message, severity });
+        errors.push({
+            fileName: resolveFileName(match[1], files),
+            line: parseInt(match[2], 10),
+            col: parseInt(match[3], 10),
+            message: match[5].trim(),
+            severity: match[4] === 'error' ? 'error' : match[4] === 'warning' ? 'warning' : 'info',
+        });
     }
     return errors;
 };
 
 const parseGoErrors = (output, files) => {
     const errors = [];
-    // ./main.go:12:5: undefined: x
     const regex = /\.?\/?([\w/.-]+\.go):(\d+):(\d+):\s*(.+)/g;
     let match;
     while ((match = regex.exec(output)) !== null) {
-        const rawFile = match[1];
-        const line = parseInt(match[2], 10);
-        const col = parseInt(match[3], 10);
-        const message = match[4].trim();
-        const fileName = Object.keys(files).find(f => f.endsWith(rawFile) || f.includes(rawFile)) || rawFile;
-        errors.push({ fileName, line, col, message, severity: 'error' });
+        errors.push({
+            fileName: resolveFileName(match[1], files),
+            line: parseInt(match[2], 10),
+            col: parseInt(match[3], 10),
+            message: match[4].trim(),
+            severity: 'error',
+        });
     }
     return errors;
 };
 
 const parseRustErrors = (output, files) => {
     const errors = [];
-    // error[E0425]: cannot find value `x`
-    //  --> src/main.rs:12:5
     const regex = /-+>\s*([\w/.-]+\.rs):(\d+):(\d+)/g;
     const msgRegex = /^(error|warning)(\[[\w]+\])?:\s*(.+)/m;
     let match;
     while ((match = regex.exec(output)) !== null) {
-        const rawFile = match[1];
-        const line = parseInt(match[2], 10);
-        const col = parseInt(match[3], 10);
         const before = output.slice(Math.max(0, match.index - 200), match.index);
         const msgMatch = before.match(msgRegex);
-        const message = msgMatch ? msgMatch[3].trim() : 'Error';
-        const severity = msgMatch?.[1] === 'warning' ? 'warning' : 'error';
-        const fileName = Object.keys(files).find(f => f.endsWith(rawFile) || f.includes(rawFile)) || rawFile;
-        errors.push({ fileName, line, col, message, severity });
+        errors.push({
+            fileName: resolveFileName(match[1], files),
+            line: parseInt(match[2], 10),
+            col: parseInt(match[3], 10),
+            message: msgMatch ? msgMatch[3].trim() : 'Error',
+            severity: msgMatch?.[1] === 'warning' ? 'warning' : 'error',
+        });
     }
     return errors;
 };
 
 const parseErrors = (output, language, files) => {
     if (!output || output === 'Running...') return [];
-    // Don't parse if it looks like successful output (no error keywords)
     const hasError = /(error|exception|traceback|failed|undefined|cannot|no such|warning)/i.test(output);
     if (!hasError) return [];
     switch (language) {
@@ -147,8 +157,6 @@ const parseErrors = (output, language, files) => {
         default: return [];
     }
 };
-
-// ─── Decoration Helpers ───────────────────────────────────────────────────────
 
 const getSeverityColor = (severity) => {
     if (severity === 'error') return '#ff6b6b';
@@ -178,10 +186,10 @@ const CodeEditor = () => {
     const [users, setUsers] = useState([]); 
     const [currentUserRole, setCurrentUserRole] = useState('READ_ONLY');
 
-    // ─── Diagnostics State ────────────────────────────────────────────────────
-    // { [fileName]: [{ line, col, message, severity }] }
+    // { [fullFilePath]: [{ line, col, message, severity }] }
     const [editorErrors, setEditorErrors] = useState({});
-    const decorationIds = useRef([]); // current active decorations in Monaco
+    const decorationIds = useRef([]);
+    const viewZoneIds = useRef([]);
 
     const [isSidebarOpen, setIsSidebarOpen] = useState(true);
     const [isExplorerExpanded, setIsExplorerExpanded] = useState(true);
@@ -240,32 +248,88 @@ const CodeEditor = () => {
         return userColorMap.current[user];
     };
 
-    // ─── Apply decorations to Monaco for the active file ─────────────────────
+    // ─── Apply decorations + inline view zones ────────────────────────────────
     const applyDecorations = useCallback((fileName) => {
         if (!editorRef.current || !monacoRef.current) return;
         const monaco = monacoRef.current;
+        const editor = editorRef.current;
         const errors = editorErrors[fileName] || [];
 
+        // Wavy underline decorations
         const newDecorations = errors.map(err => ({
             range: new monaco.Range(err.line, err.col || 1, err.line, Number.MAX_VALUE),
             options: {
                 inlineClassName: err.severity === 'error' ? 'diagnostic-error' : err.severity === 'warning' ? 'diagnostic-warning' : 'diagnostic-info',
                 hoverMessage: { value: `**${err.severity.toUpperCase()}**: ${err.message}` },
-                overviewRuler: {
-                    color: getSeverityColor(err.severity),
-                    position: monaco.editor.OverviewRulerLane.Right,
-                },
+                overviewRuler: { color: getSeverityColor(err.severity), position: monaco.editor.OverviewRulerLane.Right },
                 minimap: { color: getSeverityColor(err.severity), position: monaco.editor.MinimapPosition.Inline },
                 glyphMarginClassName: err.severity === 'error' ? 'diagnostic-glyph-error' : 'diagnostic-glyph-warning',
             }
         }));
+        decorationIds.current = editor.deltaDecorations(decorationIds.current, newDecorations);
 
-        decorationIds.current = editorRef.current.deltaDecorations(decorationIds.current, newDecorations);
+        // View zones — inline message below each error line
+        editor.changeViewZones(accessor => {
+            viewZoneIds.current.forEach(id => accessor.removeZone(id));
+            viewZoneIds.current = [];
+
+            errors.forEach(err => {
+                const color = getSeverityColor(err.severity);
+                const icon = err.severity === 'error' ? '●' : '▲';
+
+                // marginDomNode forces Monaco to reserve left-gutter space correctly
+                const marginDomNode = document.createElement('div');
+
+                const domNode = document.createElement('div');
+                domNode.style.cssText = `
+                    display: flex;
+                    align-items: center;
+                    gap: 6px;
+                    padding: 1px 12px 1px 12px;
+                    font-family: JetBrains Mono, monospace;
+                    font-size: 12px;
+                    color: ${color};
+                    background: ${color}11;
+                    border-left: 2px solid ${color}66;
+                    white-space: nowrap;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                    cursor: pointer;
+                    box-sizing: border-box;
+                    width: 100%;
+                    height: 100%;
+                `;
+                domNode.title = `Line ${err.line}: ${err.message}`;
+                domNode.innerHTML = `<span style="opacity:0.7;font-size:10px;margin-right:4px">${icon}</span>${err.message}`;
+                domNode.onclick = () => {
+                    editor.revealLineNearTop(err.line);
+                    editor.setPosition({ lineNumber: err.line, column: 1 });
+                    editor.focus();
+                };
+
+                const zoneId = accessor.addZone({
+                    afterLineNumber: err.line,  // zone appears AFTER this line number
+                    afterColumn: Number.MAX_VALUE,
+                    heightInLines: 1,
+                    minWidthInPx: 200,
+                    domNode,
+                    marginDomNode,
+                });
+                viewZoneIds.current.push(zoneId);
+            });
+        });
     }, [editorErrors]);
 
-    // Re-apply decorations when active file changes or errors update
     useEffect(() => {
         applyDecorations(activeFile);
+        return () => {
+            if (editorRef.current) {
+                editorRef.current.changeViewZones(accessor => {
+                    viewZoneIds.current.forEach(id => accessor.removeZone(id));
+                    viewZoneIds.current = [];
+                });
+            }
+        };
     }, [activeFile, editorErrors, applyDecorations]);
 
     useEffect(() => {
@@ -352,54 +416,22 @@ const CodeEditor = () => {
         monacoRef.current = monaco;
         window.monaco = monaco;
 
-        // ─── Enable built-in JS/TS diagnostics ───────────────────────────────
-        // Real squiggles as you type for JavaScript and TypeScript — zero backend needed
-        monaco.languages.typescript.javascriptDefaults.setDiagnosticsOptions({
-            noSemanticValidation: false,
-            noSyntaxValidation: false,
-        });
-        monaco.languages.typescript.typescriptDefaults.setDiagnosticsOptions({
-            noSemanticValidation: false,
-            noSyntaxValidation: false,
-        });
-        monaco.languages.typescript.javascriptDefaults.setCompilerOptions({
-            target: monaco.languages.typescript.ScriptTarget.ES2020,
-            allowNonTsExtensions: true,
-            checkJs: true,
-        });
-        monaco.languages.typescript.typescriptDefaults.setCompilerOptions({
-            target: monaco.languages.typescript.ScriptTarget.ES2020,
-            allowNonTsExtensions: true,
-            strict: true,
-        });
+        // Enable built-in JS/TS diagnostics — real squiggles as you type
+        monaco.languages.typescript.javascriptDefaults.setDiagnosticsOptions({ noSemanticValidation: false, noSyntaxValidation: false });
+        monaco.languages.typescript.typescriptDefaults.setDiagnosticsOptions({ noSemanticValidation: false, noSyntaxValidation: false });
+        monaco.languages.typescript.javascriptDefaults.setCompilerOptions({ target: monaco.languages.typescript.ScriptTarget.ES2020, allowNonTsExtensions: true, checkJs: true });
+        monaco.languages.typescript.typescriptDefaults.setCompilerOptions({ target: monaco.languages.typescript.ScriptTarget.ES2020, allowNonTsExtensions: true, strict: true });
 
-        // Inject CSS for decorations (only once)
+        // Inject CSS for wavy underline decorations (only once)
         if (!document.getElementById('diagnostic-styles')) {
             const style = document.createElement('style');
             style.id = 'diagnostic-styles';
             style.textContent = `
-                .diagnostic-error {
-                    text-decoration: underline wavy #ff6b6b;
-                    text-underline-offset: 3px;
-                }
-                .diagnostic-warning {
-                    text-decoration: underline wavy #f0883e;
-                    text-underline-offset: 3px;
-                }
-                .diagnostic-info {
-                    text-decoration: underline wavy #58a6ff;
-                    text-underline-offset: 3px;
-                }
-                .diagnostic-glyph-error::before {
-                    content: '●';
-                    color: #ff6b6b;
-                    font-size: 10px;
-                }
-                .diagnostic-glyph-warning::before {
-                    content: '●';
-                    color: #f0883e;
-                    font-size: 10px;
-                }
+                .diagnostic-error { text-decoration: underline wavy #ff6b6b; text-underline-offset: 3px; }
+                .diagnostic-warning { text-decoration: underline wavy #f0883e; text-underline-offset: 3px; }
+                .diagnostic-info { text-decoration: underline wavy #58a6ff; text-underline-offset: 3px; }
+                .diagnostic-glyph-error::before { content: '●'; color: #ff6b6b; font-size: 10px; }
+                .diagnostic-glyph-warning::before { content: '▲'; color: #f0883e; font-size: 10px; }
             `;
             document.head.appendChild(style);
         }
@@ -415,7 +447,6 @@ const CodeEditor = () => {
             }
         });
 
-        // Apply any existing decorations for the active file immediately
         applyDecorations(activeFile);
     };
 
@@ -463,6 +494,7 @@ const CodeEditor = () => {
             }
         };
         window.addEventListener('beforeunload', handleBeforeUnload);
+
         const connectToSocket = () => {
             if (isConnected.current) return;
             const socket = new SockJS(`${API_BASE_URL}/ws`);
@@ -548,6 +580,7 @@ const CodeEditor = () => {
             });
         };
         connectToSocket();
+
         return () => {
             window.removeEventListener('beforeunload', handleBeforeUnload);
             clearTimeout(reconnectTimeout);
@@ -619,7 +652,6 @@ const CodeEditor = () => {
         const newLang = e.target.value;
         const newCode = CODE_SNIPPETS[newLang];
         setFiles(prev => ({ ...prev, [activeFile]: { ...prev[activeFile], language: newLang, value: newCode } }));
-        // Clear errors when language changes
         setEditorErrors(prev => { const n = { ...prev }; delete n[activeFile]; return n; });
         if (stompClient.current?.connected) {
             stompClient.current.send(`/app/code/${roomId}`, {}, JSON.stringify({ sender: username, content: newCode, language: newLang, type: "CODE", fileName: activeFile }));
@@ -631,10 +663,6 @@ const CodeEditor = () => {
             isLocalChange.current = true;
             setFiles(prev => ({ ...prev, [activeFile]: { ...prev[activeFile], value } }));
             stompClient.current.send(`/app/code/${roomId}`, {}, JSON.stringify({ sender: username, content: value, language: files[activeFile].language, type: "CODE", fileName: activeFile }));
-            // Clear errors for this file as the user edits — they'll be recalculated on next run
-            if (editorErrors[activeFile]?.length > 0) {
-                setEditorErrors(prev => { const n = { ...prev }; delete n[activeFile]; return n; });
-            }
         }
     };
 
@@ -670,7 +698,6 @@ const CodeEditor = () => {
         if (!activeFile) return;
         setIsRunning(true);
         setOutput("Running...");
-        // Clear previous errors on new run
         setEditorErrors({});
         try {
             const fileData = {};
@@ -690,7 +717,7 @@ const CodeEditor = () => {
             const outputText = response.data;
             setOutput(outputText);
 
-            // ─── Parse errors and build editorErrors map ──────────────────────
+            // Parse errors — resolveFileName ensures keys match openFiles paths exactly
             const parsed = parseErrors(outputText, files[activeFile].language, files);
             if (parsed.length > 0) {
                 const byFile = {};
@@ -699,8 +726,6 @@ const CodeEditor = () => {
                     byFile[err.fileName].push(err);
                 });
                 setEditorErrors(byFile);
-
-                // Count total errors for toast
                 const errCount = parsed.filter(e => e.severity === 'error').length;
                 const warnCount = parsed.filter(e => e.severity === 'warning').length;
                 if (errCount > 0) toast.error(`${errCount} error${errCount > 1 ? 's' : ''} found`, { icon: '🔴' });
@@ -746,7 +771,6 @@ const CodeEditor = () => {
             if (activeFile !== fileName) handleFileOpen(fileName);
             setTimeout(() => {
                 if (editorRef.current) {
-                    // Use revealLineNearTop so line 1-3 don't disappear behind the file tabs
                     editorRef.current.revealLineNearTop(lineNumber);
                     editorRef.current.setPosition({ lineNumber, column: 1 });
                     editorRef.current.focus();
@@ -768,15 +792,16 @@ const CodeEditor = () => {
             const match = match1 || match2;
             if (match) {
                 const fullMatch = match[0];
-                const fileName = match[1];
+                const rawFile = match[1];
                 const lineNumber = parseInt(match[2], 10);
+                const resolvedFile = resolveFileName(rawFile, files);
                 const parts = line.split(fullMatch);
                 return (
                     <div key={index} style={{ ...style, fontFamily: 'JetBrains Mono, monospace', lineHeight: '1.5' }}>
                         {parts[0]}
-                        <span onClick={() => handleJumpToLine(fileName, lineNumber)}
+                        <span onClick={() => handleJumpToLine(resolvedFile, lineNumber)}
                             style={{ textDecoration: 'underline', cursor: 'pointer', color: '#58a6ff', fontWeight: 'bold' }}
-                            title={`Jump to line ${lineNumber} in ${fileName}`}>
+                            title={`Jump to line ${lineNumber} in ${resolvedFile}`}>
                             {fullMatch}
                         </span>
                         {parts[1]}
@@ -790,15 +815,17 @@ const CodeEditor = () => {
     const renderTabName = (filePath) => {
         const fileName = filePath.split('/').pop();
         const duplicates = openFiles.filter(p => p.split('/').pop() === fileName);
-        const errorCount = (editorErrors[filePath] || []).filter(e => e.severity === 'error').length;
-        const warnCount = (editorErrors[filePath] || []).filter(e => e.severity === 'warning').length;
+        // Use full path key — now guaranteed to match editorErrors keys via resolveFileName
+        const fileErrors = editorErrors[filePath] || [];
+        const errorCount = fileErrors.filter(e => e.severity === 'error').length;
+        const warnCount = fileErrors.filter(e => e.severity === 'warning').length;
 
         const badge = errorCount > 0 ? (
-            <span style={{ marginLeft: '5px', background: '#ff6b6b', color: '#fff', borderRadius: '8px', fontSize: '0.6rem', padding: '0 5px', fontWeight: 'bold', lineHeight: '16px' }}>
+            <span style={{ marginLeft: '5px', background: '#ff6b6b', color: '#fff', borderRadius: '8px', fontSize: '0.6rem', padding: '0 5px', fontWeight: 'bold', lineHeight: '16px', flexShrink: 0 }}>
                 {errorCount}
             </span>
         ) : warnCount > 0 ? (
-            <span style={{ marginLeft: '5px', background: '#f0883e', color: '#fff', borderRadius: '8px', fontSize: '0.6rem', padding: '0 5px', fontWeight: 'bold', lineHeight: '16px' }}>
+            <span style={{ marginLeft: '5px', background: '#f0883e', color: '#fff', borderRadius: '8px', fontSize: '0.6rem', padding: '0 5px', fontWeight: 'bold', lineHeight: '16px', flexShrink: 0 }}>
                 {warnCount}
             </span>
         ) : null;
@@ -806,11 +833,10 @@ const CodeEditor = () => {
         if (duplicates.length > 1) {
             const parts = filePath.split('/');
             if (parts.length > 1) {
-                const parentDir = parts[parts.length - 2];
                 return (
                     <span style={{ display: 'flex', alignItems: 'center' }}>
                         {fileName}
-                        <span style={{ fontSize: '0.85em', color: 'var(--text-muted)', marginLeft: '6px', fontWeight: 'normal' }}>{parentDir}/</span>
+                        <span style={{ fontSize: '0.85em', color: 'var(--text-muted)', marginLeft: '6px', fontWeight: 'normal' }}>{parts[parts.length - 2]}/</span>
                         {badge}
                     </span>
                 );
@@ -819,7 +845,6 @@ const CodeEditor = () => {
         return <span style={{ display: 'flex', alignItems: 'center' }}>{fileName}{badge}</span>;
     };
 
-    // ─── Error Panel (shown below editor when errors exist for active file) ──
     const activeFileErrors = editorErrors[activeFile] || [];
 
     return (
@@ -835,7 +860,7 @@ const CodeEditor = () => {
                             <button className="btn btn-icon" onClick={() => setIsSecretsModalOpen(false)} style={{ background: 'transparent', color: 'var(--text-muted)' }}>&times;</button>
                         </div>
                         <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '20px', lineHeight: '1.4' }}>
-                            Add environment variables (like API keys) here. They will be securely injected when you run your code and won't be saved in your files.
+                            Add environment variables here. They will be securely injected when you run your code and won't be saved in your files.
                         </p>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '250px', overflowY: 'auto', marginBottom: '15px', paddingRight: '5px' }}>
                             {secrets.map((secret, index) => (
@@ -913,7 +938,9 @@ const CodeEditor = () => {
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
                     </button>
                 </div>
+
                 <div style={{ padding: '12px 15px 4px', fontSize: '0.7rem', color: '#8b949e', letterSpacing: '1px', flexShrink: 0 }}>EXPLORER</div>
+
                 <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
                     {/* Files Panel */}
                     <div style={{ display: 'flex', flexDirection: 'column', flex: isExplorerExpanded ? '1 1 0%' : '0 0 auto', minHeight: 0 }}>
@@ -928,6 +955,7 @@ const CodeEditor = () => {
                             </div>
                         )}
                     </div>
+
                     {/* Online Users Panel */}
                     <div style={{ display: 'flex', flexDirection: 'column', flex: isOnlineExpanded ? '0 1 auto' : '0 0 auto', maxHeight: '35%', minHeight: 0 }}>
                         <div onClick={() => setIsOnlineExpanded(!isOnlineExpanded)}
@@ -968,6 +996,7 @@ const CodeEditor = () => {
                             </div>
                         )}
                     </div>
+
                     {/* Chat Panel */}
                     <div style={{ display: 'flex', flexDirection: 'column', flex: isChatExpanded ? '1 1 0%' : '0 0 auto', minHeight: 0 }}>
                         <div onClick={() => setIsChatExpanded(!isChatExpanded)}
@@ -1000,6 +1029,7 @@ const CodeEditor = () => {
                         )}
                     </div>
                 </div>
+
                 <div style={{ flexShrink: 0, marginTop: 'auto', borderTop: '1px solid var(--border)', padding: '15px', display: 'flex', gap: '10px' }}>
                     <button className="btn btn-secondary" style={{flex:1, padding: '8px', fontSize: '0.85rem'}} onClick={copyRoomLink}>Copy Link</button>
                     <button className="btn btn-danger" style={{flex:1, padding: '8px', fontSize: '0.85rem'}} onClick={() => navigate('/')}>Leave</button>
@@ -1099,20 +1129,9 @@ const CodeEditor = () => {
                             )}
                             <div id="vim-status-bar" className="vim-status-bar"></div>
 
-                            {/* ─── Error Panel — absolutely positioned so editor height is never affected ── */}
+                            {/* Error Panel — absolute overlay so editor height never changes */}
                             {activeFileErrors.length > 0 && (
-                                <div style={{
-                                    position: 'absolute',
-                                    bottom: 0,
-                                    left: 0,
-                                    right: 0,
-                                    maxHeight: '140px',
-                                    overflowY: 'auto',
-                                    backgroundColor: '#0d1117ee',
-                                    borderTop: '1px solid #ff6b6b44',
-                                    backdropFilter: 'blur(4px)',
-                                    zIndex: 10,
-                                }}>
+                                <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, maxHeight: '140px', overflowY: 'auto', backgroundColor: '#0d1117ee', borderTop: '1px solid #ff6b6b44', backdropFilter: 'blur(4px)', zIndex: 10 }}>
                                     <div style={{ padding: '4px 12px', fontSize: '0.65rem', color: '#ff6b6b', letterSpacing: '0.5px', fontWeight: 'bold', textTransform: 'uppercase', display: 'flex', justifyContent: 'space-between', alignItems: 'center', position: 'sticky', top: 0, backgroundColor: '#0d1117ee', zIndex: 1 }}>
                                         <span>
                                             {activeFileErrors.filter(e => e.severity === 'error').length > 0 && `🔴 ${activeFileErrors.filter(e => e.severity === 'error').length} error${activeFileErrors.filter(e => e.severity === 'error').length > 1 ? 's' : ''}`}
