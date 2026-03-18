@@ -746,7 +746,8 @@ const CodeEditor = () => {
             if (activeFile !== fileName) handleFileOpen(fileName);
             setTimeout(() => {
                 if (editorRef.current) {
-                    editorRef.current.revealLineInCenter(lineNumber);
+                    // Use revealLineNearTop so line 1-3 don't disappear behind the file tabs
+                    editorRef.current.revealLineNearTop(lineNumber);
                     editorRef.current.setPosition({ lineNumber, column: 1 });
                     editorRef.current.focus();
                 }
@@ -1080,7 +1081,7 @@ const CodeEditor = () => {
                     </div>
                 ) : (
                     <Split className={`editor-split ${splitDirection}`} sizes={[70, 30]} minSize={250} gutterSize={8} direction={splitDirection}>
-                        <div className="editor-wrapper" style={{ display: 'flex', flexDirection: 'column' }}>
+                        <div className="editor-wrapper" style={{ display: 'flex', flexDirection: 'column', position: 'relative' }}>
                             {showMarkdownPreview && files[activeFile]?.language === "markdown" ? (
                                 <Split className="markdown-split" sizes={[50, 50]} minSize={100} gutterSize={8} direction="horizontal" style={{ display: 'flex', flex: 1 }}>
                                     <div style={{ height: '100%' }}>
@@ -1098,17 +1099,28 @@ const CodeEditor = () => {
                             )}
                             <div id="vim-status-bar" className="vim-status-bar"></div>
 
-                            {/* ─── Error Panel ─────────────────────────────────────── */}
+                            {/* ─── Error Panel — absolutely positioned so editor height is never affected ── */}
                             {activeFileErrors.length > 0 && (
-                                <div style={{ flexShrink: 0, borderTop: '1px solid #ff6b6b44', backgroundColor: '#ff6b6b08', maxHeight: '140px', overflowY: 'auto' }}>
-                                    <div style={{ padding: '4px 12px', fontSize: '0.65rem', color: '#ff6b6b', letterSpacing: '0.5px', fontWeight: 'bold', textTransform: 'uppercase', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <div style={{
+                                    position: 'absolute',
+                                    bottom: 0,
+                                    left: 0,
+                                    right: 0,
+                                    maxHeight: '140px',
+                                    overflowY: 'auto',
+                                    backgroundColor: '#0d1117ee',
+                                    borderTop: '1px solid #ff6b6b44',
+                                    backdropFilter: 'blur(4px)',
+                                    zIndex: 10,
+                                }}>
+                                    <div style={{ padding: '4px 12px', fontSize: '0.65rem', color: '#ff6b6b', letterSpacing: '0.5px', fontWeight: 'bold', textTransform: 'uppercase', display: 'flex', justifyContent: 'space-between', alignItems: 'center', position: 'sticky', top: 0, backgroundColor: '#0d1117ee', zIndex: 1 }}>
                                         <span>
                                             {activeFileErrors.filter(e => e.severity === 'error').length > 0 && `🔴 ${activeFileErrors.filter(e => e.severity === 'error').length} error${activeFileErrors.filter(e => e.severity === 'error').length > 1 ? 's' : ''}`}
                                             {activeFileErrors.filter(e => e.severity === 'warning').length > 0 && `  🟡 ${activeFileErrors.filter(e => e.severity === 'warning').length} warning${activeFileErrors.filter(e => e.severity === 'warning').length > 1 ? 's' : ''}`}
                                         </span>
                                         <button onClick={() => setEditorErrors(prev => { const n = { ...prev }; delete n[activeFile]; return n; })}
                                             style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '0.75rem' }}>
-                                            Clear
+                                            ✕ Clear
                                         </button>
                                     </div>
                                     {activeFileErrors.map((err, i) => (
