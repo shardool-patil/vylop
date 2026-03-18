@@ -240,12 +240,17 @@ const CodeEditor = () => {
         return userColorMap.current[user];
     };
 
-    // ─── Apply decorations to Monaco for the active file ─────────────────────
+    // Track view zone IDs so we can remove them on re-render
+    const viewZoneIds = useRef([]);
+
+    // ─── Apply decorations + view zones to Monaco for the active file ────────
     const applyDecorations = useCallback((fileName) => {
         if (!editorRef.current || !monacoRef.current) return;
         const monaco = monacoRef.current;
+        const editor = editorRef.current;
         const errors = editorErrors[fileName] || [];
 
+        // 1. Wavy underline decorations
         const newDecorations = errors.map(err => ({
             range: new monaco.Range(err.line, err.col || 1, err.line, Number.MAX_VALUE),
             options: {
@@ -259,13 +264,62 @@ const CodeEditor = () => {
                 glyphMarginClassName: err.severity === 'error' ? 'diagnostic-glyph-error' : 'diagnostic-glyph-warning',
             }
         }));
+        decorationIds.current = editor.deltaDecorations(decorationIds.current, newDecorations);
 
-        decorationIds.current = editorRef.current.deltaDecorations(decorationIds.current, newDecorations);
-    }, [editorErrors]);
+        // 2. Remove existing view zones
+        editor.changeViewZones(accessor => {
+            viewZoneIds.current.forEach(id => accessor.removeZone(id));
+            viewZoneIds.current = [];
+
+            // 3. Add a view zone below each error line
+            errors.forEach(err => {
+                const color = getSeverityColor(err.severity);
+                const icon = err.severity === 'error' ? '●' : '▲';
+
+                const domNode = document.createElement('div');
+                domNode.style.cssText = `
+                    display: flex;
+                    align-items: center;
+                    gap: 6px;
+                    padding: 2px 12px 2px 54px;
+                    font-family: JetBrains Mono, monospace;
+                    font-size: 12px;
+                    color: ${color};
+                    background: ${color}11;
+                    border-left: 2px solid ${color}66;
+                    white-space: nowrap;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                    cursor: pointer;
+                    box-sizing: border-box;
+                    width: 100%;
+                `;
+                domNode.title = `Line ${err.line}: ${err.message}`;
+                domNode.innerHTML = `<span style="opacity:0.7;font-size:10px">${icon}</span> ${err.message}`;
+                domNode.onclick = () => handleJumpToLine(fileName, err.line);
+
+                const zoneId = accessor.addZone({
+                    afterLineNumber: err.line,
+                    heightInLines: 1,
+                    domNode,
+                });
+                viewZoneIds.current.push(zoneId);
+            });
+        });
+    }, [editorErrors]); // eslint-disable-line
 
     // Re-apply decorations when active file changes or errors update
     useEffect(() => {
         applyDecorations(activeFile);
+        // Clean up view zones when component unmounts or file changes
+        return () => {
+            if (editorRef.current) {
+                editorRef.current.changeViewZones(accessor => {
+                    viewZoneIds.current.forEach(id => accessor.removeZone(id));
+                    viewZoneIds.current = [];
+                });
+            }
+        };
     }, [activeFile, editorErrors, applyDecorations]);
 
     useEffect(() => {
