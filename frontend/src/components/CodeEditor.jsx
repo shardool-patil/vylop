@@ -12,6 +12,7 @@ import { saveAs } from 'file-saver';
 import ReactMarkdown from 'react-markdown'; 
 import * as Y from 'yjs';
 import { MonacoBinding } from 'y-monaco';
+import { Awareness } from 'y-protocols/awareness';
 import Client from './Client';
 import FileExplorer, { getFileIcon } from './FileExplorer';
 import './CodeEditor.css'; 
@@ -54,9 +55,24 @@ const resolveFileName = (rawFile, files) => {
     return match || rawFile;
 };
 
-// ─── CRDT Helpers ─────────────────────────────────────────────────────────
-const toBase64 = (arr) => btoa(String.fromCharCode.apply(null, arr));
-const fromBase64 = (str) => new Uint8Array(atob(str).split('').map(c => c.charCodeAt(0)));
+// ─── SAFE CRDT Helpers (Fixed Call Stack limits) ──────────────────────────
+const toBase64 = (arr) => {
+    const bytes = new Uint8Array(arr);
+    let binary = '';
+    for (let i = 0; i < bytes.byteLength; i++) {
+        binary += String.fromCharCode(bytes[i]);
+    }
+    return btoa(binary);
+};
+
+const fromBase64 = (str) => {
+    const binary = atob(str);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+    }
+    return bytes;
+};
 
 // ─── Error Parsers ────────────────────────────────────────────────────────
 
@@ -232,6 +248,7 @@ const CodeEditor = () => {
 
     // ─── CRDT State ───────────────────────────────────────────────────────────
     const ydocRef = useRef(new Y.Doc());
+    const awarenessRef = useRef(new Awareness(ydocRef.current));
     const ymonacoBindingRef = useRef(null);
     const isHostRef = useRef(false);
 
@@ -261,6 +278,7 @@ const CodeEditor = () => {
     useEffect(() => {
         const ydoc = ydocRef.current;
         const updateHandler = (update, origin) => {
+            // Send our local changes to STOMP so others receive them
             if (origin !== 'remote' && stompClient.current?.connected) {
                 stompClient.current.send(`/app/yjs/${roomId}`, {}, JSON.stringify({
                     sender: username,
@@ -360,7 +378,6 @@ const CodeEditor = () => {
                     Object.keys(loadedFiles).forEach(fileName => {
                         newFilesState[fileName] = { name: fileName, language: getLanguageFromExtension(fileName), value: loadedFiles[fileName] };
                         
-                        // Seed Yjs Document with fetched files
                         const ytext = ydocRef.current.getText(fileName);
                         if (ytext.toString() === '') {
                             ytext.insert(0, loadedFiles[fileName]);
@@ -428,7 +445,6 @@ const CodeEditor = () => {
     const bindMonacoToYjs = useCallback((fileName, editor = editorRef.current) => {
         if (!editor) return;
         
-        // Destroy old binding if it exists
         if (ymonacoBindingRef.current) {
             ymonacoBindingRef.current.destroy();
             ymonacoBindingRef.current = null;
@@ -436,12 +452,11 @@ const CodeEditor = () => {
 
         const ytext = ydocRef.current.getText(fileName);
         
-        // Bind the current Monaco model to this specific Y.Text
         ymonacoBindingRef.current = new MonacoBinding(
             ytext, 
             editor.getModel(), 
             new Set([editor]), 
-            null
+            awarenessRef.current
         );
     }, []);
 
@@ -632,7 +647,6 @@ const CodeEditor = () => {
                 });
                 client.send(`/app/room/${roomId}/join`, {}, JSON.stringify({ username, type: "JOIN" }));
                 
-                // Request current Yjs state from the room
                 client.send(`/app/yjs/${roomId}`, {}, JSON.stringify({ sender: username, type: 'REQUEST_SYNC' }));
             }, () => {
                 isConnected.current = false; setWsConnected(false); stompClient.current = null;
@@ -766,7 +780,6 @@ const CodeEditor = () => {
         setEditorErrors({});
         try {
             const fileData = {};
-            // Pull code state directly from Yjs for accurate execution
             Object.keys(files).forEach(key => { fileData[key] = ydocRef.current.getText(key).toString(); });
             const envVarsPayload = secrets.reduce((acc, curr) => {
                 if (curr.key.trim() && curr.value.trim()) acc[curr.key.trim()] = curr.value.trim();
