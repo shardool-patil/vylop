@@ -36,11 +36,12 @@ public class EditorController {
         messagingTemplate.convertAndSend("/topic/code/" + roomId, message);
     }
 
-    // --- NEW: Yjs CRDT Sync Endpoint ---
+    // FIX: Receive Yjs update as raw String and broadcast as-is
+    // Using Map<String, Object> causes Jackson to re-serialize the base64 update
+    // string differently, corrupting the CRDT binary data
     @MessageMapping("/yjs/{roomId}")
-    public void sendYjsUpdate(@DestinationVariable String roomId, @Payload Map<String, Object> payload) {
-        // Explicitly cast the map to (Object) to resolve the compiler ambiguity
-        messagingTemplate.convertAndSend("/topic/yjs/" + roomId, (Object) payload);
+    public void sendYjsUpdate(@DestinationVariable String roomId, @Payload String payload) {
+        messagingTemplate.convertAndSend("/topic/yjs/" + roomId, payload);
     }
 
     @MessageMapping("/chat/{roomId}")
