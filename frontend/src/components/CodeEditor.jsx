@@ -211,7 +211,11 @@ const CodeEditor = () => {
     const nextColorIndex = useRef(0);
     const disconnectTimeoutRef = useRef(null); 
 
-    // ─── Yjs CRDT ─────────────────────────────────────────────────────────────
+    // Keep refs for values used inside WebSocket callbacks to avoid stale closures
+    const filesRef = useRef(files);
+    useEffect(() => { filesRef.current = files; }, [files]);
+    const activeFileRef = useRef(activeFile);
+    useEffect(() => { activeFileRef.current = activeFile; }, [activeFile]);
     const ydocRef = useRef(new Y.Doc());
     const awarenessRef = useRef(new Awareness(ydocRef.current));
     const ymonacoBindingRef = useRef(null);
@@ -273,19 +277,18 @@ const CodeEditor = () => {
         const ytext = ydocRef.current.getText(fileName);
 
         // Create or reuse Monaco model for this file
-        const lang = files[fileName]?.language || 'plaintext';
+        const lang = filesRef.current[fileName]?.language || 'plaintext';
         const monacoLang = lang === 'cpp' ? 'cpp' : lang;
         const uri = monaco.Uri.parse(`file:///${fileName}`);
         let model = monaco.editor.getModel(uri);
         if (!model) {
-            // Seed the model with Yjs content if available, else file content
-            const initialContent = ytext.toString() || files[fileName]?.value || '';
+            const initialContent = ytext.toString() || filesRef.current[fileName]?.value || '';
             model = monaco.editor.createModel(initialContent, monacoLang, uri);
         }
 
         // Sync Yjs text with model content if Yjs is empty (first load)
-        if (ytext.toString() === '' && files[fileName]?.value) {
-            ytext.insert(0, files[fileName].value);
+        if (ytext.toString() === '' && filesRef.current[fileName]?.value) {
+            ytext.insert(0, filesRef.current[fileName].value);
         }
 
         editor.setModel(model);
@@ -299,7 +302,7 @@ const CodeEditor = () => {
         );
 
         boundFileRef.current = fileName;
-    }, [files]);
+    }, []); // eslint-disable-line — intentionally empty, uses refs to avoid destroying binding on file state changes
 
     // Rebind when active file changes
     useEffect(() => {
@@ -409,7 +412,8 @@ const CodeEditor = () => {
 
     const updateRemoteCursor = (user, pos, file) => {
         if (user === username) return;
-        if (file !== activeFile) {
+        const currentActiveFile = activeFileRef.current;
+        if (file !== currentActiveFile) {
             if (remoteCursors.current[user] && editorRef.current) editorRef.current.removeContentWidget(remoteCursors.current[user]);
             return;
         }
@@ -433,7 +437,14 @@ const CodeEditor = () => {
                 node.appendChild(label);
                 return node;
             },
-            getPosition: () => ({ position: { lineNumber: pos.lineNumber, column: pos.column }, preference: [monacoRef.current.editor.ContentWidgetPositionPreference.EXACT] })
+            // FIX: Use ABOVE preference so cursor renders even past line end
+            getPosition: () => ({
+                position: { lineNumber: pos.lineNumber, column: pos.column },
+                preference: [
+                    monacoRef.current.editor.ContentWidgetPositionPreference.EXACT,
+                    monacoRef.current.editor.ContentWidgetPositionPreference.ABOVE,
+                ]
+            })
         };
         editorRef.current.addContentWidget(widget);
         remoteCursors.current[user] = widget;
@@ -627,7 +638,7 @@ const CodeEditor = () => {
                 });
                 client.subscribe(`/topic/cursor/${roomId}`, (msg) => {
                     const body = JSON.parse(msg.body);
-                    updateRemoteCursor(body.username, { lineNumber: body.lineNumber, column: body.column }, body.fileName || activeFile);
+                    updateRemoteCursor(body.username, { lineNumber: body.lineNumber, column: body.column }, body.fileName || activeFileRef.current);
                 });
 
                 client.send(`/app/room/${roomId}/join`, {}, JSON.stringify({ username, type: "JOIN" }));
