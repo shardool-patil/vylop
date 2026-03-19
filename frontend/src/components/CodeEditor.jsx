@@ -170,11 +170,9 @@ const CodeEditor = () => {
     const [username] = useState(() => location.state?.username || localStorage.getItem('username') || '');
     const [roomName, setRoomName] = useState(() => location.state?.roomName || "Syncing Workspace...");
 
-    const [files, setFiles] = useState({
-        "src/Main.java": { name: "src/Main.java", language: "java", value: CODE_SNIPPETS["java"] }
-    });
-    const [openFiles, setOpenFiles] = useState(["src/Main.java"]);
-    const [activeFile, setActiveFile] = useState("src/Main.java");
+    const [files, setFiles] = useState({});
+    const [openFiles, setOpenFiles] = useState([]);
+    const [activeFile, setActiveFile] = useState(null);
     
     const [output, setOutput] = useState("");
     const [userInput, setUserInput] = useState(""); 
@@ -232,6 +230,10 @@ const CodeEditor = () => {
     const awarenessRef = useRef(new Awareness(ydocRef.current));
     const ymonacoBindingRef = useRef(null);
     const isHostRef = useRef(false);
+    
+    const [isWorkspaceLoaded, setIsWorkspaceLoaded] = useState(false);
+    const loadedFilesRef = useRef({});
+    const ydocInitialized = useRef(false);
 
     const isHost = currentUserRole === 'HOST';
     const canEdit = currentUserRole === 'HOST' || currentUserRole === 'EDITOR';
@@ -254,16 +256,55 @@ const CodeEditor = () => {
         return userColorMap.current[user];
     };
 
-    // ─── Document Sync Effect (Now using memory-safe arrays!) ─────────────────
+    // ─── 1. FETCH DB DATA ────────────────────────────────────────────────────
+    useEffect(() => {
+        let isMounted = true;
+        const fetchWorkspaceData = async () => {
+            if (loadedRooms.has(roomId)) return;
+            loadedRooms.add(roomId);
+            try {
+                const metaRes = await axios.get(`${API_BASE_URL}/api/workspace/${roomId}`);
+                if (isMounted && metaRes.data?.name) setRoomName(metaRes.data.name);
+                
+                const response = await axios.get(`${API_BASE_URL}/api/workspace/${roomId}/load`);
+                if (!isMounted) return;
+                
+                loadedFilesRef.current = response.data || {};
+                
+                if (Object.keys(loadedFilesRef.current).length > 0) {
+                    const newFilesState = {};
+                    Object.keys(loadedFilesRef.current).forEach(fileName => {
+                        newFilesState[fileName] = { name: fileName, language: getLanguageFromExtension(fileName) };
+                    });
+                    setFiles(newFilesState);
+                    const firstFile = Object.keys(newFilesState)[0];
+                    setActiveFile(firstFile);
+                    setOpenFiles([firstFile]);
+                }
+            } catch (error) {
+                if (isMounted) {
+                    loadedRooms.delete(roomId);
+                    setRoomName(prev => prev === "Syncing Workspace..." ? "Dev Workspace" : prev);
+                }
+            } finally {
+                if (isMounted) setIsWorkspaceLoaded(true);
+            }
+        };
+        if (roomId && username) fetchWorkspaceData();
+        return () => { isMounted = false; loadedRooms.delete(roomId); };
+    }, [roomId, username]);
+
+    // ─── 2. BROADCAST YJS UPDATES ────────────────────────────────────────────
     useEffect(() => {
         const ydoc = ydocRef.current;
         const updateHandler = (update, origin) => {
             if (origin !== 'remote' && stompClient.current?.connected) {
+                const updateArray = Array.from(update); // Convert to plain JSON array
+                console.log(`[VYLOP DEBUG] Sending Yjs update (Size: ${updateArray.length} bytes)`);
                 stompClient.current.send(`/app/yjs/${roomId}`, {}, JSON.stringify({
                     sender: username,
                     type: 'SYNC',
-                    // Convert Uint8Array directly to a standard JSON array [1, 2, 3]
-                    update: Array.from(update)
+                    update: updateArray
                 }));
             }
         };
@@ -343,46 +384,6 @@ const CodeEditor = () => {
     }, [username, navigate]);
 
     useEffect(() => {
-        let isMounted = true;
-        const fetchWorkspaceData = async () => {
-            if (loadedRooms.has(roomId)) return;
-            loadedRooms.add(roomId);
-            try {
-                const metaRes = await axios.get(`${API_BASE_URL}/api/workspace/${roomId}`);
-                if (isMounted && metaRes.data?.name) setRoomName(metaRes.data.name);
-                const response = await axios.get(`${API_BASE_URL}/api/workspace/${roomId}/load`);
-                if (!isMounted) return;
-                const loadedFiles = response.data;
-                if (loadedFiles && Object.keys(loadedFiles).length > 0) {
-                    const newFilesState = {};
-                    Object.keys(loadedFiles).forEach(fileName => {
-                        newFilesState[fileName] = { name: fileName, language: getLanguageFromExtension(fileName), value: loadedFiles[fileName] };
-                        
-                        const ytext = ydocRef.current.getText(fileName);
-                        if (ytext.toString() === '') {
-                            ydocRef.current.transact(() => {
-                                ytext.insert(0, loadedFiles[fileName]);
-                            });
-                        }
-                    });
-                    setFiles(newFilesState);
-                    const firstFile = Object.keys(newFilesState)[0];
-                    setActiveFile(firstFile);
-                    setOpenFiles([firstFile]);
-                    toast.success("Workspace synced", { icon: '☁️', id: 'workspace-loaded-toast' });
-                }
-            } catch (error) {
-                if (isMounted) {
-                    loadedRooms.delete(roomId);
-                    setRoomName(prev => prev === "Syncing Workspace..." ? "Dev Workspace" : prev);
-                }
-            }
-        };
-        if (roomId && username) fetchWorkspaceData();
-        return () => { isMounted = false; loadedRooms.delete(roomId); };
-    }, [roomId, username]);
-
-    useEffect(() => {
         const handleResize = () => setSplitDirection(window.innerWidth < 900 ? 'vertical' : 'horizontal');
         window.addEventListener('resize', handleResize);
         return () => window.removeEventListener('resize', handleResize);
@@ -433,6 +434,7 @@ const CodeEditor = () => {
         }
 
         const ytext = ydocRef.current.getText(fileName);
+        console.log(`[VYLOP DEBUG] Binding Monaco to file: ${fileName}`);
         
         ymonacoBindingRef.current = new MonacoBinding(
             ytext, 
@@ -522,10 +524,12 @@ const CodeEditor = () => {
         }
     };
 
+    // ─── 3. WEBSOCKET CONNECTION & RECEIVING ─────────────────────────────────
     useEffect(() => {
-        if (!username) return;
+        if (!username || !isWorkspaceLoaded) return; 
         if (disconnectTimeoutRef.current) { clearTimeout(disconnectTimeoutRef.current); disconnectTimeoutRef.current = null; }
         let reconnectTimeout;
+        
         const handleBeforeUnload = () => {
             if (stompClient.current?.connected) {
                 stompClient.current.send(`/app/room/${roomId}/leave`, {}, JSON.stringify({ username, type: "LEAVE" }));
@@ -544,16 +548,26 @@ const CodeEditor = () => {
                 isConnected.current = true;
                 setWsConnected(true);
                 clearTimeout(reconnectTimeout);
+                console.log("[VYLOP DEBUG] STOMP Connected successfully.");
 
-                // ─── Listen for Yjs Updates (Now parsing plain arrays perfectly) ───
+                // ─── Listen for Yjs Updates (Bulletproof Parsing) ───
                 client.subscribe(`/topic/yjs/${roomId}`, (msg) => {
                     try {
-                        const body = JSON.parse(msg.body);
-                        if (body.type === 'SYNC' && body.sender !== username) {
-                            // Rebuild Uint8Array from standard JSON array
-                            const update = new Uint8Array(body.update);
-                            Y.applyUpdate(ydocRef.current, update, 'remote');
-                        } else if (body.type === 'REQUEST_SYNC' && isHostRef.current && body.sender !== username) {
+                        // Protect against double-stringification from backend
+                        let payload = msg.body;
+                        if (typeof payload === 'string') {
+                            payload = JSON.parse(payload);
+                        }
+                        if (typeof payload === 'string') {
+                            payload = JSON.parse(payload);
+                        }
+
+                        if (payload.type === 'SYNC' && payload.sender !== username) {
+                            console.log(`[VYLOP DEBUG] Received Yjs update from ${payload.sender}`);
+                            const updateArray = new Uint8Array(payload.update);
+                            Y.applyUpdate(ydocRef.current, updateArray, 'remote');
+                        } else if (payload.type === 'REQUEST_SYNC' && isHostRef.current && payload.sender !== username) {
+                            console.log(`[VYLOP DEBUG] ${payload.sender} requested state. Broadcasting full document.`);
                             const state = Y.encodeStateAsUpdate(ydocRef.current);
                             stompClient.current.send(`/app/yjs/${roomId}`, {}, JSON.stringify({
                                 sender: username,
@@ -562,7 +576,7 @@ const CodeEditor = () => {
                             }));
                         }
                     } catch (err) {
-                        console.error("Yjs Sync Parsing Error:", err);
+                        console.error("[VYLOP DEBUG] Yjs Sync Parsing Error:", err);
                     }
                 });
 
@@ -578,12 +592,34 @@ const CodeEditor = () => {
                         setEditorErrors(prev => { const n = { ...prev }; delete n[body.fileName]; return n; });
                         if (body.sender !== username) toast(`${body.sender} deleted ${body.fileName}`, { icon: '🗑️' });
                     } else if (body.type === "METADATA") {
-                        setFiles(prev => ({ ...prev, [body.fileName]: { name: body.fileName, language: body.language, value: prev[body.fileName]?.value || "" } }));
+                        setFiles(prev => ({ ...prev, [body.fileName]: { name: body.fileName, language: body.language } }));
                     }
                 });
 
                 client.subscribe(`/topic/users/${roomId}`, (msg) => {
                     const body = JSON.parse(msg.body);
+                    
+                    if (!ydocInitialized.current) {
+                        const me = body.users.find(u => u.username === username);
+                        if (me) {
+                            if (body.users.length === 1) {
+                                console.log("[VYLOP DEBUG] I am the first user. Seeding from DB.");
+                                ydocRef.current.transact(() => {
+                                    Object.keys(loadedFilesRef.current).forEach(fileName => {
+                                        const ytext = ydocRef.current.getText(fileName);
+                                        if (ytext.length === 0) {
+                                            ytext.insert(0, loadedFilesRef.current[fileName]);
+                                        }
+                                    });
+                                });
+                            } else {
+                                console.log("[VYLOP DEBUG] Room already active. Requesting state from host.");
+                                client.send(`/app/yjs/${roomId}`, {}, JSON.stringify({ sender: username, type: 'REQUEST_SYNC' }));
+                            }
+                            ydocInitialized.current = true;
+                        }
+                    }
+
                     if (body.type === 'KICK') {
                         if (body.username === username) {
                             toast.error("You have been kicked from the room by the host.", { icon: '🥾', duration: 5000 });
@@ -632,9 +668,9 @@ const CodeEditor = () => {
                     const body = JSON.parse(msg.body);
                     updateRemoteCursor(body.username, { lineNumber: body.lineNumber, column: body.column }, body.fileName || activeFile);
                 });
+                
                 client.send(`/app/room/${roomId}/join`, {}, JSON.stringify({ username, type: "JOIN" }));
                 
-                client.send(`/app/yjs/${roomId}`, {}, JSON.stringify({ sender: username, type: 'REQUEST_SYNC' }));
             }, () => {
                 isConnected.current = false; setWsConnected(false); stompClient.current = null;
                 reconnectTimeout = setTimeout(connectToSocket, 3000);
@@ -653,7 +689,7 @@ const CodeEditor = () => {
                 isConnected.current = false; setWsConnected(false); stompClient.current = null;
             }, 200);
         };
-    }, [roomId, username, navigate]);
+    }, [roomId, username, navigate, isWorkspaceLoaded]); 
 
     useEffect(() => {
         if (chatContainerRef.current) chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
@@ -681,7 +717,7 @@ const CodeEditor = () => {
             ydocRef.current.getText(name).insert(0, initialCode);
         });
 
-        setFiles(prev => ({ ...prev, [name]: { name, language: newFileLang, value: initialCode } }));
+        setFiles(prev => ({ ...prev, [name]: { name, language: newFileLang } }));
         if (!openFiles.includes(name)) setOpenFiles(prev => [...prev, name]);
         setActiveFile(name);
         
@@ -733,7 +769,7 @@ const CodeEditor = () => {
     };
 
     const handleEditorChange = (value) => {
-        setFiles(prev => ({ ...prev, [activeFile]: { ...prev[activeFile], value } }));
+        // No local state updating to prevent sync loops
     };
 
     const handleTypingChange = (e) => {
@@ -1186,7 +1222,7 @@ const CodeEditor = () => {
                                         <Editor path={activeFile} height="100%" language="markdown" theme={editorTheme} onMount={handleEditorDidMount} onChange={handleEditorChange} options={{ readOnly: !canEdit, domReadOnly: !canEdit, minimap: { enabled: false }, fontSize: 14, fontFamily: 'JetBrains Mono', automaticLayout: true, wordWrap: 'on', hover: { above: false }, fixedOverflowWidgets: true }} />
                                     </div>
                                     <div className="markdown-preview" style={{ height: '100%', overflowY: 'auto', padding: '20px', backgroundColor: 'var(--bg-dark)', color: 'var(--text-main)' }}>
-                                        <ReactMarkdown>{files[activeFile]?.value || ""}</ReactMarkdown>
+                                        <ReactMarkdown>{ydocRef.current.getText(activeFile).toString()}</ReactMarkdown>
                                     </div>
                                 </Split>
                             ) : (
