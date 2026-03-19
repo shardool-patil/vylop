@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useLocation, useNavigate } from 'react-router-dom';
-import Editor, { loader } from "@monaco-editor/react";
+import Editor from "@monaco-editor/react";
 import Stomp from 'stompjs';
 import SockJS from 'sockjs-client';
 import axios from 'axios';
@@ -55,28 +55,20 @@ const resolveFileName = (rawFile, files) => {
     return match || rawFile;
 };
 
-// ─── Safe base64 helpers (avoids call stack limit) ───────────────────────────
-const toBase64 = (arr) => {
-    const bytes = new Uint8Array(arr);
-    let binary = '';
-    for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
-    return btoa(binary);
-};
+// ─── Error Parsers ────────────────────────────────────────────────────────
 
-const fromBase64 = (str) => {
-    const binary = atob(str);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-    return bytes;
-};
-
-// ─── Error Parsers ────────────────────────────────────────────────────────────
 const parseJavaErrors = (output, files) => {
     const errors = [];
     const regex = /([a-zA-Z0-9_/\\.-]+\.java):(\d+):\s*(error|warning):\s*(.+)/g;
     let match;
     while ((match = regex.exec(output)) !== null) {
-        errors.push({ fileName: resolveFileName(match[1], files), line: parseInt(match[2], 10), col: 1, message: match[4].trim(), severity: match[3] === 'error' ? 'error' : 'warning' });
+        errors.push({
+            fileName: resolveFileName(match[1], files),
+            line: parseInt(match[2], 10),
+            col: 1,
+            message: match[4].trim(),
+            severity: match[3] === 'error' ? 'error' : 'warning',
+        });
     }
     return errors;
 };
@@ -88,7 +80,13 @@ const parsePythonErrors = (output, files) => {
     let match;
     while ((match = regex.exec(output)) !== null) {
         const msgMatch = output.slice(match.index).match(msgRegex);
-        errors.push({ fileName: resolveFileName(match[1], files), line: parseInt(match[2], 10), col: 1, message: msgMatch ? `${msgMatch[1]}: ${msgMatch[2]}` : 'Error', severity: 'error' });
+        errors.push({
+            fileName: resolveFileName(match[1], files),
+            line: parseInt(match[2], 10),
+            col: 1,
+            message: msgMatch ? `${msgMatch[1]}: ${msgMatch[2]}` : 'Error',
+            severity: 'error',
+        });
     }
     return errors;
 };
@@ -98,7 +96,13 @@ const parseCppErrors = (output, files) => {
     const regex = /([a-zA-Z0-9_/\\.-]+\.(?:cpp|cc|h|hpp)):(\d+):(\d+):\s*(error|warning|note):\s*(.+)/g;
     let match;
     while ((match = regex.exec(output)) !== null) {
-        errors.push({ fileName: resolveFileName(match[1], files), line: parseInt(match[2], 10), col: parseInt(match[3], 10), message: match[5].trim(), severity: match[4] === 'error' ? 'error' : match[4] === 'warning' ? 'warning' : 'info' });
+        errors.push({
+            fileName: resolveFileName(match[1], files),
+            line: parseInt(match[2], 10),
+            col: parseInt(match[3], 10),
+            message: match[5].trim(),
+            severity: match[4] === 'error' ? 'error' : match[4] === 'warning' ? 'warning' : 'info',
+        });
     }
     return errors;
 };
@@ -108,7 +112,13 @@ const parseGoErrors = (output, files) => {
     const regex = /\.?\/?([\w/.-]+\.go):(\d+):(\d+):\s*(.+)/g;
     let match;
     while ((match = regex.exec(output)) !== null) {
-        errors.push({ fileName: resolveFileName(match[1], files), line: parseInt(match[2], 10), col: parseInt(match[3], 10), message: match[4].trim(), severity: 'error' });
+        errors.push({
+            fileName: resolveFileName(match[1], files),
+            line: parseInt(match[2], 10),
+            col: parseInt(match[3], 10),
+            message: match[4].trim(),
+            severity: 'error',
+        });
     }
     return errors;
 };
@@ -121,7 +131,13 @@ const parseRustErrors = (output, files) => {
     while ((match = regex.exec(output)) !== null) {
         const before = output.slice(Math.max(0, match.index - 200), match.index);
         const msgMatch = before.match(msgRegex);
-        errors.push({ fileName: resolveFileName(match[1], files), line: parseInt(match[2], 10), col: parseInt(match[3], 10), message: msgMatch ? msgMatch[3].trim() : 'Error', severity: msgMatch?.[1] === 'warning' ? 'warning' : 'error' });
+        errors.push({
+            fileName: resolveFileName(match[1], files),
+            line: parseInt(match[2], 10),
+            col: parseInt(match[3], 10),
+            message: msgMatch ? msgMatch[3].trim() : 'Error',
+            severity: msgMatch?.[1] === 'warning' ? 'warning' : 'error',
+        });
     }
     return errors;
 };
@@ -211,22 +227,18 @@ const CodeEditor = () => {
     const nextColorIndex = useRef(0);
     const disconnectTimeoutRef = useRef(null); 
 
-    // Keep refs for values used inside WebSocket callbacks to avoid stale closures
-    const filesRef = useRef(files);
-    useEffect(() => { filesRef.current = files; }, [files]);
-    const activeFileRef = useRef(activeFile);
-    useEffect(() => { activeFileRef.current = activeFile; }, [activeFile]);
+    // ─── CRDT State ───────────────────────────────────────────────────────────
     const ydocRef = useRef(new Y.Doc());
     const awarenessRef = useRef(new Awareness(ydocRef.current));
     const ymonacoBindingRef = useRef(null);
     const isHostRef = useRef(false);
-    // Track which fileName the current binding is for
-    const boundFileRef = useRef(null);
 
     const isHost = currentUserRole === 'HOST';
     const canEdit = currentUserRole === 'HOST' || currentUserRole === 'EDITOR';
 
-    useEffect(() => { isHostRef.current = currentUserRole === 'HOST'; }, [currentUserRole]);
+    useEffect(() => {
+        isHostRef.current = currentUserRole === 'HOST';
+    }, [currentUserRole]);
 
     const getTooltip = (requiredRole) => {
         if (requiredRole === 'HOST' && !isHost) return "Only the host can perform this action";
@@ -242,7 +254,7 @@ const CodeEditor = () => {
         return userColorMap.current[user];
     };
 
-    // ─── Yjs update handler — send local changes to all peers ─────────────────
+    // ─── Document Sync Effect (Now using memory-safe arrays!) ─────────────────
     useEffect(() => {
         const ydoc = ydocRef.current;
         const updateHandler = (update, origin) => {
@@ -250,66 +262,14 @@ const CodeEditor = () => {
                 stompClient.current.send(`/app/yjs/${roomId}`, {}, JSON.stringify({
                     sender: username,
                     type: 'SYNC',
-                    update: toBase64(update)
+                    // Convert Uint8Array directly to a standard JSON array [1, 2, 3]
+                    update: Array.from(update)
                 }));
             }
         };
         ydoc.on('update', updateHandler);
         return () => ydoc.off('update', updateHandler);
     }, [roomId, username]);
-
-    // ─── Bind Monaco editor to Yjs text for the active file ───────────────────
-    // FIX: Only rebind when the file actually changes, and properly destroy old binding
-    const bindMonacoToYjs = useCallback((fileName) => {
-        const editor = editorRef.current;
-        const monaco = monacoRef.current;
-        if (!editor || !monaco) return;
-
-        // Already bound to this file — skip
-        if (boundFileRef.current === fileName && ymonacoBindingRef.current) return;
-
-        // Destroy old binding
-        if (ymonacoBindingRef.current) {
-            ymonacoBindingRef.current.destroy();
-            ymonacoBindingRef.current = null;
-        }
-
-        const ytext = ydocRef.current.getText(fileName);
-
-        // Create or reuse Monaco model for this file
-        const lang = filesRef.current[fileName]?.language || 'plaintext';
-        const monacoLang = lang === 'cpp' ? 'cpp' : lang;
-        const uri = monaco.Uri.parse(`file:///${fileName}`);
-        let model = monaco.editor.getModel(uri);
-        if (!model) {
-            const initialContent = ytext.toString() || filesRef.current[fileName]?.value || '';
-            model = monaco.editor.createModel(initialContent, monacoLang, uri);
-        }
-
-        // Sync Yjs text with model content if Yjs is empty (first load)
-        if (ytext.toString() === '' && filesRef.current[fileName]?.value) {
-            ytext.insert(0, filesRef.current[fileName].value);
-        }
-
-        editor.setModel(model);
-
-        // Bind Yjs text to Monaco model
-        ymonacoBindingRef.current = new MonacoBinding(
-            ytext,
-            model,
-            new Set([editor]),
-            awarenessRef.current
-        );
-
-        boundFileRef.current = fileName;
-    }, []); // eslint-disable-line — intentionally empty, uses refs to avoid destroying binding on file state changes
-
-    // Rebind when active file changes
-    useEffect(() => {
-        if (activeFile && editorRef.current && monacoRef.current) {
-            bindMonacoToYjs(activeFile);
-        }
-    }, [activeFile, bindMonacoToYjs]);
 
     // ─── Apply decorations + inline view zones ────────────────────────────────
     const applyDecorations = useCallback((fileName) => {
@@ -333,16 +293,34 @@ const CodeEditor = () => {
         editor.changeViewZones(accessor => {
             viewZoneIds.current.forEach(id => accessor.removeZone(id));
             viewZoneIds.current = [];
+
             errors.forEach(err => {
                 const color = getSeverityColor(err.severity);
                 const icon = err.severity === 'error' ? '●' : '▲';
                 const marginDomNode = document.createElement('div');
                 const domNode = document.createElement('div');
-                domNode.style.cssText = `display:flex;align-items:center;gap:6px;padding:1px 12px;font-family:JetBrains Mono,monospace;font-size:12px;color:${color};background:${color}11;border-left:2px solid ${color}66;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;box-sizing:border-box;width:100%;height:100%;`;
+                domNode.style.cssText = `
+                    display: flex; align-items: center; gap: 6px; padding: 1px 12px 1px 12px;
+                    font-family: JetBrains Mono, monospace; font-size: 12px; color: ${color};
+                    background: ${color}11; border-left: 2px solid ${color}66; white-space: nowrap;
+                    overflow: hidden; text-overflow: ellipsis; cursor: pointer; box-sizing: border-box; width: 100%; height: 100%;
+                `;
                 domNode.title = `Line ${err.line}: ${err.message}`;
                 domNode.innerHTML = `<span style="opacity:0.7;font-size:10px;margin-right:4px">${icon}</span>${err.message}`;
-                domNode.onclick = () => { editor.revealLineNearTop(err.line); editor.setPosition({ lineNumber: err.line, column: 1 }); editor.focus(); };
-                const zoneId = accessor.addZone({ afterLineNumber: err.line, afterColumn: Number.MAX_VALUE, heightInLines: 1, minWidthInPx: 200, domNode, marginDomNode });
+                domNode.onclick = () => {
+                    editor.revealLineNearTop(err.line);
+                    editor.setPosition({ lineNumber: err.line, column: 1 });
+                    editor.focus();
+                };
+
+                const zoneId = accessor.addZone({
+                    afterLineNumber: err.line,
+                    afterColumn: Number.MAX_VALUE,
+                    heightInLines: 1,
+                    minWidthInPx: 200,
+                    domNode,
+                    marginDomNode,
+                });
                 viewZoneIds.current.push(zoneId);
             });
         });
@@ -379,9 +357,13 @@ const CodeEditor = () => {
                     const newFilesState = {};
                     Object.keys(loadedFiles).forEach(fileName => {
                         newFilesState[fileName] = { name: fileName, language: getLanguageFromExtension(fileName), value: loadedFiles[fileName] };
-                        // Seed Yjs with saved content
+                        
                         const ytext = ydocRef.current.getText(fileName);
-                        if (ytext.toString() === '') ytext.insert(0, loadedFiles[fileName]);
+                        if (ytext.toString() === '') {
+                            ydocRef.current.transact(() => {
+                                ytext.insert(0, loadedFiles[fileName]);
+                            });
+                        }
                     });
                     setFiles(newFilesState);
                     const firstFile = Object.keys(newFilesState)[0];
@@ -412,8 +394,7 @@ const CodeEditor = () => {
 
     const updateRemoteCursor = (user, pos, file) => {
         if (user === username) return;
-        const currentActiveFile = activeFileRef.current;
-        if (file !== currentActiveFile) {
+        if (file !== activeFile) {
             if (remoteCursors.current[user] && editorRef.current) editorRef.current.removeContentWidget(remoteCursors.current[user]);
             return;
         }
@@ -437,25 +418,41 @@ const CodeEditor = () => {
                 node.appendChild(label);
                 return node;
             },
-            // FIX: Use ABOVE preference so cursor renders even past line end
-            getPosition: () => ({
-                position: { lineNumber: pos.lineNumber, column: pos.column },
-                preference: [
-                    monacoRef.current.editor.ContentWidgetPositionPreference.EXACT,
-                    monacoRef.current.editor.ContentWidgetPositionPreference.ABOVE,
-                ]
-            })
+            getPosition: () => ({ position: { lineNumber: pos.lineNumber, column: pos.column }, preference: [monacoRef.current.editor.ContentWidgetPositionPreference.EXACT] })
         };
         editorRef.current.addContentWidget(widget);
         remoteCursors.current[user] = widget;
     };
+
+    const bindMonacoToYjs = useCallback((fileName, editor = editorRef.current) => {
+        if (!editor) return;
+        
+        if (ymonacoBindingRef.current) {
+            ymonacoBindingRef.current.destroy();
+            ymonacoBindingRef.current = null;
+        }
+
+        const ytext = ydocRef.current.getText(fileName);
+        
+        ymonacoBindingRef.current = new MonacoBinding(
+            ytext, 
+            editor.getModel(), 
+            new Set([editor]), 
+            awarenessRef.current
+        );
+    }, []);
+
+    useEffect(() => {
+        if (activeFile && editorRef.current) {
+            bindMonacoToYjs(activeFile);
+        }
+    }, [activeFile, bindMonacoToYjs]);
 
     const handleEditorDidMount = (editor, monaco) => {
         editorRef.current = editor;
         monacoRef.current = monaco;
         window.monaco = monaco;
 
-        // Enable built-in JS/TS diagnostics
         monaco.languages.typescript.javascriptDefaults.setDiagnosticsOptions({ noSemanticValidation: false, noSyntaxValidation: false });
         monaco.languages.typescript.typescriptDefaults.setDiagnosticsOptions({ noSemanticValidation: false, noSyntaxValidation: false });
         monaco.languages.typescript.javascriptDefaults.setCompilerOptions({ target: monaco.languages.typescript.ScriptTarget.ES2020, allowNonTsExtensions: true, checkJs: true });
@@ -474,8 +471,9 @@ const CodeEditor = () => {
             document.head.appendChild(style);
         }
 
-        // Bind to active file on mount
-        if (activeFile) bindMonacoToYjs(activeFile);
+        if (activeFile) {
+            bindMonacoToYjs(activeFile, editor);
+        }
 
         Object.keys(pendingCursors.current).forEach(user => {
             if (pendingCursors.current[user].file === activeFile) updateRemoteCursor(user, pendingCursors.current[user].pos, pendingCursors.current[user].file);
@@ -547,21 +545,24 @@ const CodeEditor = () => {
                 setWsConnected(true);
                 clearTimeout(reconnectTimeout);
 
+                // ─── Listen for Yjs Updates (Now parsing plain arrays perfectly) ───
                 client.subscribe(`/topic/yjs/${roomId}`, (msg) => {
-                    // Backend now sends raw JSON string — parse it
-                    const body = JSON.parse(msg.body);
-                    if (body.type === 'SYNC' && body.sender !== username) {
-                        const update = fromBase64(body.update);
-                        Y.applyUpdate(ydocRef.current, update, 'remote');
-                    } else if (body.type === 'REQUEST_SYNC' && isHostRef.current && body.sender !== username) {
-                        setTimeout(() => {
+                    try {
+                        const body = JSON.parse(msg.body);
+                        if (body.type === 'SYNC' && body.sender !== username) {
+                            // Rebuild Uint8Array from standard JSON array
+                            const update = new Uint8Array(body.update);
+                            Y.applyUpdate(ydocRef.current, update, 'remote');
+                        } else if (body.type === 'REQUEST_SYNC' && isHostRef.current && body.sender !== username) {
                             const state = Y.encodeStateAsUpdate(ydocRef.current);
-                            stompClient.current?.send(`/app/yjs/${roomId}`, {}, JSON.stringify({
+                            stompClient.current.send(`/app/yjs/${roomId}`, {}, JSON.stringify({
                                 sender: username,
                                 type: 'SYNC',
-                                update: toBase64(state)
+                                update: Array.from(state)
                             }));
-                        }, 300);
+                        }
+                    } catch (err) {
+                        console.error("Yjs Sync Parsing Error:", err);
                     }
                 });
 
@@ -576,16 +577,8 @@ const CodeEditor = () => {
                         });
                         setEditorErrors(prev => { const n = { ...prev }; delete n[body.fileName]; return n; });
                         if (body.sender !== username) toast(`${body.sender} deleted ${body.fileName}`, { icon: '🗑️' });
-                    } else if (body.type === "METADATA" && body.sender !== username) {
-                        // FIX: When language changes, destroy current binding so Monaco gets a fresh model
-                        setFiles(prev => {
-                            const updated = { ...prev, [body.fileName]: { ...prev[body.fileName], language: body.language } };
-                            // Force rebind with new language model
-                            if (body.fileName === boundFileRef.current) {
-                                boundFileRef.current = null;
-                            }
-                            return updated;
-                        });
+                    } else if (body.type === "METADATA") {
+                        setFiles(prev => ({ ...prev, [body.fileName]: { name: body.fileName, language: body.language, value: prev[body.fileName]?.value || "" } }));
                     }
                 });
 
@@ -637,16 +630,11 @@ const CodeEditor = () => {
                 });
                 client.subscribe(`/topic/cursor/${roomId}`, (msg) => {
                     const body = JSON.parse(msg.body);
-                    updateRemoteCursor(body.username, { lineNumber: body.lineNumber, column: body.column }, body.fileName || activeFileRef.current);
+                    updateRemoteCursor(body.username, { lineNumber: body.lineNumber, column: body.column }, body.fileName || activeFile);
                 });
-
                 client.send(`/app/room/${roomId}/join`, {}, JSON.stringify({ username, type: "JOIN" }));
-
-                // FIX: Delay REQUEST_SYNC so subscriptions are fully set up first
-                setTimeout(() => {
-                    client.send(`/app/yjs/${roomId}`, {}, JSON.stringify({ sender: username, type: 'REQUEST_SYNC' }));
-                }, 500);
-
+                
+                client.send(`/app/yjs/${roomId}`, {}, JSON.stringify({ sender: username, type: 'REQUEST_SYNC' }));
             }, () => {
                 isConnected.current = false; setWsConnected(false); stompClient.current = null;
                 reconnectTimeout = setTimeout(connectToSocket, 3000);
@@ -688,12 +676,15 @@ const CodeEditor = () => {
         if (!newFileName.trim()) { toast.error("File name cannot be empty"); return; }
         const name = newFileName.trim();
         const initialCode = CODE_SNIPPETS[newFileLang] || `// Start coding in ${name}...`;
-        // Seed Yjs for new file
-        const ytext = ydocRef.current.getText(name);
-        if (ytext.toString() === '') ytext.insert(0, initialCode);
+        
+        ydocRef.current.transact(() => {
+            ydocRef.current.getText(name).insert(0, initialCode);
+        });
+
         setFiles(prev => ({ ...prev, [name]: { name, language: newFileLang, value: initialCode } }));
         if (!openFiles.includes(name)) setOpenFiles(prev => [...prev, name]);
         setActiveFile(name);
+        
         if (stompClient.current?.connected) {
             stompClient.current.send(`/app/code/${roomId}`, {}, JSON.stringify({ sender: username, language: newFileLang, type: "METADATA", fileName: name }));
         }
@@ -727,41 +718,22 @@ const CodeEditor = () => {
         if (!isHost || !activeFile) return;
         const newLang = e.target.value;
         const newCode = CODE_SNIPPETS[newLang];
-
-        // FIX: Replace Yjs text content with new snippet
-        const ytext = ydocRef.current.getText(activeFile);
+        
         ydocRef.current.transact(() => {
+            const ytext = ydocRef.current.getText(activeFile);
             ytext.delete(0, ytext.length);
             ytext.insert(0, newCode);
         });
 
-        // FIX: Reset binding so Monaco model is recreated with new language
-        boundFileRef.current = null;
-        if (ymonacoBindingRef.current) {
-            ymonacoBindingRef.current.destroy();
-            ymonacoBindingRef.current = null;
-        }
-        // Delete old Monaco model so a new one is created with the correct language
-        if (monacoRef.current) {
-            const uri = monacoRef.current.Uri.parse(`file:///${activeFile}`);
-            const oldModel = monacoRef.current.editor.getModel(uri);
-            if (oldModel) oldModel.dispose();
-        }
-
-        setFiles(prev => ({ ...prev, [activeFile]: { ...prev[activeFile], language: newLang, value: newCode } }));
+        setFiles(prev => ({ ...prev, [activeFile]: { ...prev[activeFile], language: newLang } }));
         setEditorErrors(prev => { const n = { ...prev }; delete n[activeFile]; return n; });
-
         if (stompClient.current?.connected) {
             stompClient.current.send(`/app/code/${roomId}`, {}, JSON.stringify({ sender: username, language: newLang, type: "METADATA", fileName: activeFile }));
         }
     };
 
     const handleEditorChange = (value) => {
-        // With Yjs binding, Monaco model is the source of truth
-        // Just keep files state in sync for reading (run, save, download)
-        if (activeFile) {
-            setFiles(prev => ({ ...prev, [activeFile]: { ...prev[activeFile], value: value || '' } }));
-        }
+        setFiles(prev => ({ ...prev, [activeFile]: { ...prev[activeFile], value } }));
     };
 
     const handleTypingChange = (e) => {
@@ -798,16 +770,15 @@ const CodeEditor = () => {
         setOutput("Running...");
         setEditorErrors({});
         try {
-            // Always read from Yjs as source of truth
             const fileData = {};
-            Object.keys(files).forEach(key => { fileData[key] = ydocRef.current.getText(key).toString() || files[key].value; });
+            Object.keys(files).forEach(key => { fileData[key] = ydocRef.current.getText(key).toString(); });
             const envVarsPayload = secrets.reduce((acc, curr) => {
                 if (curr.key.trim() && curr.value.trim()) acc[curr.key.trim()] = curr.value.trim();
                 return acc;
             }, {});
             const response = await axios.post(`${API_BASE_URL}/api/execute`, {
                 language: files[activeFile].language,
-                code: ydocRef.current.getText(activeFile).toString() || files[activeFile].value,
+                code: ydocRef.current.getText(activeFile).toString(),
                 input: userInput,
                 mainFile: activeFile,
                 files: fileData,
@@ -815,6 +786,7 @@ const CodeEditor = () => {
             });
             const outputText = response.data;
             setOutput(outputText);
+
             const parsed = parseErrors(outputText, files[activeFile].language, files);
             if (parsed.length > 0) {
                 const byFile = {};
@@ -840,7 +812,7 @@ const CodeEditor = () => {
         setIsSaving(true);
         try {
             const fileData = {};
-            Object.keys(files).forEach(key => { fileData[key] = ydocRef.current.getText(key).toString() || files[key].value; });
+            Object.keys(files).forEach(key => { fileData[key] = ydocRef.current.getText(key).toString(); });
             await axios.post(`${API_BASE_URL}/api/workspace/${roomId}/save?username=${encodeURIComponent(username)}&roomName=${encodeURIComponent(roomName)}`, fileData);
             toast.success("Workspace saved to cloud! ☁️");
         } catch (error) {
@@ -851,7 +823,7 @@ const CodeEditor = () => {
     const downloadWorkspace = async () => {
         try {
             const zip = new JSZip();
-            Object.keys(files).forEach(fileName => { zip.file(fileName, ydocRef.current.getText(fileName).toString() || files[fileName].value); });
+            Object.keys(files).forEach(fileName => { zip.file(fileName, ydocRef.current.getText(fileName).toString()); });
             const content = await zip.generateAsync({ type: "blob" });
             saveAs(content, `${roomName.replace(/[^a-zA-Z0-9]/g, '_')}_vylop.zip`);
             toast.success("Workspace Exported! 📦");
@@ -915,15 +887,27 @@ const CodeEditor = () => {
         const fileErrors = editorErrors[filePath] || [];
         const errorCount = fileErrors.filter(e => e.severity === 'error').length;
         const warnCount = fileErrors.filter(e => e.severity === 'warning').length;
+
         const badge = errorCount > 0 ? (
-            <span style={{ marginLeft: '5px', background: '#ff6b6b', color: '#fff', borderRadius: '8px', fontSize: '0.6rem', padding: '0 5px', fontWeight: 'bold', lineHeight: '16px', flexShrink: 0 }}>{errorCount}</span>
+            <span style={{ marginLeft: '5px', background: '#ff6b6b', color: '#fff', borderRadius: '8px', fontSize: '0.6rem', padding: '0 5px', fontWeight: 'bold', lineHeight: '16px', flexShrink: 0 }}>
+                {errorCount}
+            </span>
         ) : warnCount > 0 ? (
-            <span style={{ marginLeft: '5px', background: '#f0883e', color: '#fff', borderRadius: '8px', fontSize: '0.6rem', padding: '0 5px', fontWeight: 'bold', lineHeight: '16px', flexShrink: 0 }}>{warnCount}</span>
+            <span style={{ marginLeft: '5px', background: '#f0883e', color: '#fff', borderRadius: '8px', fontSize: '0.6rem', padding: '0 5px', fontWeight: 'bold', lineHeight: '16px', flexShrink: 0 }}>
+                {warnCount}
+            </span>
         ) : null;
+
         if (duplicates.length > 1) {
             const parts = filePath.split('/');
             if (parts.length > 1) {
-                return <span style={{ display: 'flex', alignItems: 'center' }}>{fileName}<span style={{ fontSize: '0.85em', color: 'var(--text-muted)', marginLeft: '6px', fontWeight: 'normal' }}>{parts[parts.length - 2]}/</span>{badge}</span>;
+                return (
+                    <span style={{ display: 'flex', alignItems: 'center' }}>
+                        {fileName}
+                        <span style={{ fontSize: '0.85em', color: 'var(--text-muted)', marginLeft: '6px', fontWeight: 'normal' }}>{parts[parts.length - 2]}/</span>
+                        {badge}
+                    </span>
+                );
             }
         }
         return <span style={{ display: 'flex', alignItems: 'center' }}>{fileName}{badge}</span>;
@@ -943,13 +927,20 @@ const CodeEditor = () => {
                             </h3>
                             <button className="btn btn-icon" onClick={() => setIsSecretsModalOpen(false)} style={{ background: 'transparent', color: 'var(--text-muted)' }}>&times;</button>
                         </div>
-                        <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '20px', lineHeight: '1.4' }}>Add environment variables here. They will be securely injected when you run your code and won't be saved in your files.</p>
+                        <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '20px', lineHeight: '1.4' }}>
+                            Add environment variables here. They will be securely injected when you run your code and won't be saved in your files.
+                        </p>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '250px', overflowY: 'auto', marginBottom: '15px', paddingRight: '5px' }}>
                             {secrets.map((secret, index) => (
                                 <div key={index} style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                                    <input type="text" className="modal-input modern-input" placeholder="KEY" value={secret.key} onChange={(e) => { const n = [...secrets]; n[index].key = e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, ''); setSecrets(n); }} style={{ flex: 1, fontSize: '0.85rem' }} />
-                                    <input type="password" className="modal-input modern-input" placeholder="VALUE" value={secret.value} onChange={(e) => { const n = [...secrets]; n[index].value = e.target.value; setSecrets(n); }} style={{ flex: 1, fontSize: '0.85rem' }} />
-                                    <button className="btn btn-icon" onClick={() => { const n = secrets.filter((_, i) => i !== index); setSecrets(n.length ? n : [{ key: '', value: '' }]); }} style={{ color: '#ff6b6b', background: 'transparent', padding: '4px' }}>
+                                    <input type="text" className="modal-input modern-input" placeholder="KEY" value={secret.key}
+                                        onChange={(e) => { const n = [...secrets]; n[index].key = e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, ''); setSecrets(n); }}
+                                        style={{ flex: 1, fontSize: '0.85rem' }} />
+                                    <input type="password" className="modal-input modern-input" placeholder="VALUE" value={secret.value}
+                                        onChange={(e) => { const n = [...secrets]; n[index].value = e.target.value; setSecrets(n); }}
+                                        style={{ flex: 1, fontSize: '0.85rem' }} />
+                                    <button className="btn btn-icon" onClick={() => { const n = secrets.filter((_, i) => i !== index); setSecrets(n.length ? n : [{ key: '', value: '' }]); }}
+                                        style={{ color: '#ff6b6b', background: 'transparent', padding: '4px' }}>
                                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
                                     </button>
                                 </div>
@@ -978,7 +969,8 @@ const CodeEditor = () => {
                         </div>
                         <div className="modal-field">
                             <label>File Name (Use slashes for folders)</label>
-                            <input type="text" className="modal-input modern-input" value={newFileName} onChange={(e) => setNewFileName(e.target.value)} placeholder={`e.g. src/utils/script.${getExtension(newFileLang)}`} onKeyDown={(e) => e.key === 'Enter' && handleCreateNewFile()} autoFocus />
+                            <input type="text" className="modal-input modern-input" value={newFileName} onChange={(e) => setNewFileName(e.target.value)}
+                                placeholder={`e.g. src/utils/script.${getExtension(newFileLang)}`} onKeyDown={(e) => e.key === 'Enter' && handleCreateNewFile()} autoFocus />
                         </div>
                         <div className="modal-actions">
                             <button className="btn btn-secondary" onClick={() => setIsModalOpen(false)}>Cancel</button>
@@ -992,7 +984,10 @@ const CodeEditor = () => {
                 <div className="modal-overlay">
                     <div className="custom-modal">
                         <h3>Delete File</h3>
-                        <p style={{color: 'var(--text-muted)', fontSize: '0.9rem', margin: '5px 0 15px 0', lineHeight: '1.4'}}>Are you sure you want to delete <strong>{fileToDelete}</strong>?<br/><br/>This action cannot be undone and will delete the file for everyone in the room.</p>
+                        <p style={{color: 'var(--text-muted)', fontSize: '0.9rem', margin: '5px 0 15px 0', lineHeight: '1.4'}}>
+                            Are you sure you want to delete <strong>{fileToDelete}</strong>?<br/><br/>
+                            This action cannot be undone and will delete the file for everyone in the room.
+                        </p>
                         <div className="modal-actions">
                             <button className="btn btn-secondary" onClick={() => setIsDeleteModalOpen(false)}>Cancel</button>
                             <button className="btn btn-danger" onClick={confirmDeleteFile}>Delete</button>
@@ -1004,16 +999,21 @@ const CodeEditor = () => {
             {/* SIDEBAR */}
             <div className={`sidebar ${isSidebarOpen ? 'open' : 'closed'}`} style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
                 <div className="sidebar-header" style={{ flexShrink: 0 }}>
-                    <div className="brand-logo"><span className="brand-prompt">&gt;</span><span>Vylop</span><span className="brand-cursor"></span></div>
+                    <div className="brand-logo">
+                        <span className="brand-prompt">&gt;</span><span>Vylop</span><span className="brand-cursor"></span>
+                    </div>
                     <button className="btn btn-secondary btn-icon" onClick={() => setIsSidebarOpen(false)}>
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
                     </button>
                 </div>
+
                 <div style={{ padding: '12px 15px 4px', fontSize: '0.7rem', color: '#8b949e', letterSpacing: '1px', flexShrink: 0 }}>EXPLORER</div>
+
                 <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
                     {/* Files Panel */}
                     <div style={{ display: 'flex', flexDirection: 'column', flex: isExplorerExpanded ? '1 1 0%' : '0 0 auto', minHeight: 0 }}>
-                        <div onClick={() => setIsExplorerExpanded(!isExplorerExpanded)} style={{ padding: '4px 15px', cursor: 'pointer', display: 'flex', alignItems: 'center', fontSize: '0.65rem', fontWeight: 'bold', color: 'var(--text-main)', letterSpacing: '0.5px', textTransform: 'uppercase', userSelect: 'none' }}>
+                        <div onClick={() => setIsExplorerExpanded(!isExplorerExpanded)}
+                            style={{ padding: '4px 15px', cursor: 'pointer', display: 'flex', alignItems: 'center', fontSize: '0.65rem', fontWeight: 'bold', color: 'var(--text-main)', letterSpacing: '0.5px', textTransform: 'uppercase', userSelect: 'none' }}>
                             <svg style={{ marginRight: '4px', transform: isExplorerExpanded ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.1s' }} width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
                             FILES
                         </div>
@@ -1023,9 +1023,11 @@ const CodeEditor = () => {
                             </div>
                         )}
                     </div>
+
                     {/* Online Users Panel */}
                     <div style={{ display: 'flex', flexDirection: 'column', flex: isOnlineExpanded ? '0 1 auto' : '0 0 auto', maxHeight: '35%', minHeight: 0 }}>
-                        <div onClick={() => setIsOnlineExpanded(!isOnlineExpanded)} style={{ padding: '4px 15px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '0.65rem', fontWeight: 'bold', color: 'var(--text-main)', letterSpacing: '0.5px', textTransform: 'uppercase', userSelect: 'none', borderTop: '1px solid transparent' }}>
+                        <div onClick={() => setIsOnlineExpanded(!isOnlineExpanded)}
+                            style={{ padding: '4px 15px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '0.65rem', fontWeight: 'bold', color: 'var(--text-main)', letterSpacing: '0.5px', textTransform: 'uppercase', userSelect: 'none', borderTop: '1px solid transparent' }}>
                             <div style={{display: 'flex', alignItems: 'center'}}>
                                 <svg style={{ marginRight: '4px', transform: isOnlineExpanded ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.1s' }} width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
                                 ONLINE ({users.length})
@@ -1037,7 +1039,9 @@ const CodeEditor = () => {
                                 {users.map((u, i) => (
                                     <div key={i} style={{ backgroundColor: 'rgba(255,255,255,0.03)', borderRadius: '8px', padding: '10px', border: '1px solid rgba(255,255,255,0.08)', display: 'flex', flexDirection: 'column', gap: '10px' }}>
                                         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                                            <div style={{ width: '30px', height: '30px', borderRadius: '6px', backgroundColor: getUserColor(u.username), display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', color: '#fff', fontSize: '14px', flexShrink: 0 }}>{u.username.charAt(0).toUpperCase()}</div>
+                                            <div style={{ width: '30px', height: '30px', borderRadius: '6px', backgroundColor: getUserColor(u.username), display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', color: '#fff', fontSize: '14px', flexShrink: 0 }}>
+                                                {u.username.charAt(0).toUpperCase()}
+                                            </div>
                                             <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', overflow: 'hidden' }}>
                                                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                                                     <span style={{ fontSize: '0.85rem', fontWeight: '600', color: '#e1e4e8', maxWidth: '100px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{u.username}</span>
@@ -1060,9 +1064,11 @@ const CodeEditor = () => {
                             </div>
                         )}
                     </div>
+
                     {/* Chat Panel */}
                     <div style={{ display: 'flex', flexDirection: 'column', flex: isChatExpanded ? '1 1 0%' : '0 0 auto', minHeight: 0 }}>
-                        <div onClick={() => setIsChatExpanded(!isChatExpanded)} style={{ padding: '4px 15px', cursor: 'pointer', display: 'flex', alignItems: 'center', fontSize: '0.65rem', fontWeight: 'bold', color: 'var(--text-main)', letterSpacing: '0.5px', textTransform: 'uppercase', userSelect: 'none', borderTop: '1px solid transparent' }}>
+                        <div onClick={() => setIsChatExpanded(!isChatExpanded)}
+                            style={{ padding: '4px 15px', cursor: 'pointer', display: 'flex', alignItems: 'center', fontSize: '0.65rem', fontWeight: 'bold', color: 'var(--text-main)', letterSpacing: '0.5px', textTransform: 'uppercase', userSelect: 'none', borderTop: '1px solid transparent' }}>
                             <svg style={{ marginRight: '4px', transform: isChatExpanded ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.1s' }} width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
                             CHAT
                         </div>
@@ -1076,7 +1082,11 @@ const CodeEditor = () => {
                                         </div>
                                     ))}
                                 </div>
-                                {typingUsers.length > 0 && <div style={{ padding: '0 15px 5px', fontSize: '0.75rem', color: '#8b949e', fontStyle: 'italic', flexShrink: 0 }}>{typingUsers.join(', ')} {typingUsers.length === 1 ? 'is' : 'are'} typing...</div>}
+                                {typingUsers.length > 0 && (
+                                    <div style={{ padding: '0 15px 5px', fontSize: '0.75rem', color: '#8b949e', fontStyle: 'italic', flexShrink: 0 }}>
+                                        {typingUsers.join(', ')} {typingUsers.length === 1 ? 'is' : 'are'} typing...
+                                    </div>
+                                )}
                                 <div className="chat-input-area" style={{ padding: '10px 15px', flexShrink: 0 }}>
                                     <input className="modern-input" value={chatMsg} onChange={handleTypingChange} onKeyDown={(e) => e.key === 'Enter' && sendChat()} placeholder="Type a message..." />
                                     <button className="btn btn-primary btn-icon" onClick={sendChat}>
@@ -1087,6 +1097,7 @@ const CodeEditor = () => {
                         )}
                     </div>
                 </div>
+
                 <div style={{ flexShrink: 0, marginTop: 'auto', borderTop: '1px solid var(--border)', padding: '15px', display: 'flex', gap: '10px' }}>
                     <button className="btn btn-secondary" style={{flex:1, padding: '8px', fontSize: '0.85rem'}} onClick={copyRoomLink}>Copy Link</button>
                     <button className="btn btn-danger" style={{flex:1, padding: '8px', fontSize: '0.85rem'}} onClick={() => navigate('/')}>Leave</button>
@@ -1147,6 +1158,7 @@ const CodeEditor = () => {
                     </div>
                 </div>
 
+                {/* File Tabs */}
                 <div className="file-tabs">
                     {openFiles.map((fileName) => (
                         <div key={fileName} className={`file-tab ${activeFile === fileName ? 'active' : ''}`} onClick={() => setActiveFile(fileName)}>
@@ -1171,29 +1183,21 @@ const CodeEditor = () => {
                             {showMarkdownPreview && files[activeFile]?.language === "markdown" ? (
                                 <Split className="markdown-split" sizes={[50, 50]} minSize={100} gutterSize={8} direction="horizontal" style={{ display: 'flex', flex: 1 }}>
                                     <div style={{ height: '100%' }}>
-                                        <Editor height="100%" language="markdown" theme={editorTheme}
-                                            onMount={handleEditorDidMount} onChange={handleEditorChange}
-                                            options={{ readOnly: !canEdit, domReadOnly: !canEdit, minimap: { enabled: false }, fontSize: 14, fontFamily: 'JetBrains Mono', automaticLayout: true, wordWrap: 'on', hover: { above: false }, fixedOverflowWidgets: true }} />
+                                        <Editor path={activeFile} height="100%" language="markdown" theme={editorTheme} onMount={handleEditorDidMount} onChange={handleEditorChange} options={{ readOnly: !canEdit, domReadOnly: !canEdit, minimap: { enabled: false }, fontSize: 14, fontFamily: 'JetBrains Mono', automaticLayout: true, wordWrap: 'on', hover: { above: false }, fixedOverflowWidgets: true }} />
                                     </div>
                                     <div className="markdown-preview" style={{ height: '100%', overflowY: 'auto', padding: '20px', backgroundColor: 'var(--bg-dark)', color: 'var(--text-main)' }}>
-                                        <ReactMarkdown>{ydocRef.current.getText(activeFile).toString() || files[activeFile]?.value || ""}</ReactMarkdown>
+                                        <ReactMarkdown>{files[activeFile]?.value || ""}</ReactMarkdown>
                                     </div>
                                 </Split>
                             ) : (
                                 <div style={{ flex: 1, minHeight: 0, height: '100%' }}>
-                                    <Editor
-                                        height="100%"
-                                        // FIX: language prop drives Monaco model language — no value prop needed with Yjs
-                                        language={files[activeFile]?.language === "cpp" ? "cpp" : files[activeFile]?.language}
-                                        theme={editorTheme}
-                                        onMount={handleEditorDidMount}
-                                        onChange={handleEditorChange}
-                                        options={{ readOnly: !canEdit, domReadOnly: !canEdit, minimap: { enabled: false }, fontSize: 14, fontFamily: 'JetBrains Mono', automaticLayout: true, formatOnPaste: true, glyphMargin: true, hover: { above: false }, fixedOverflowWidgets: true }}
-                                    />
+                                    <Editor path={activeFile} height="100%" language={files[activeFile]?.language === "cpp" ? "cpp" : files[activeFile]?.language} theme={editorTheme} onMount={handleEditorDidMount} onChange={handleEditorChange}
+                                        options={{ readOnly: !canEdit, domReadOnly: !canEdit, minimap: { enabled: false }, fontSize: 14, fontFamily: 'JetBrains Mono', automaticLayout: true, formatOnPaste: true, glyphMargin: true, hover: { above: false }, fixedOverflowWidgets: true }} />
                                 </div>
                             )}
                             <div id="vim-status-bar" className="vim-status-bar"></div>
 
+                            {/* Error Panel — absolute overlay so editor height never changes */}
                             {activeFileErrors.length > 0 && (
                                 <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, maxHeight: '140px', overflowY: 'auto', backgroundColor: '#0d1117ee', borderTop: '1px solid #ff6b6b44', backdropFilter: 'blur(4px)', zIndex: 10 }}>
                                     <div style={{ padding: '4px 12px', fontSize: '0.65rem', color: '#ff6b6b', letterSpacing: '0.5px', fontWeight: 'bold', textTransform: 'uppercase', display: 'flex', justifyContent: 'space-between', alignItems: 'center', position: 'sticky', top: 0, backgroundColor: '#0d1117ee', zIndex: 1 }}>
@@ -1201,7 +1205,10 @@ const CodeEditor = () => {
                                             {activeFileErrors.filter(e => e.severity === 'error').length > 0 && `🔴 ${activeFileErrors.filter(e => e.severity === 'error').length} error${activeFileErrors.filter(e => e.severity === 'error').length > 1 ? 's' : ''}`}
                                             {activeFileErrors.filter(e => e.severity === 'warning').length > 0 && `  🟡 ${activeFileErrors.filter(e => e.severity === 'warning').length} warning${activeFileErrors.filter(e => e.severity === 'warning').length > 1 ? 's' : ''}`}
                                         </span>
-                                        <button onClick={() => setEditorErrors(prev => { const n = { ...prev }; delete n[activeFile]; return n; })} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '0.75rem' }}>✕ Clear</button>
+                                        <button onClick={() => setEditorErrors(prev => { const n = { ...prev }; delete n[activeFile]; return n; })}
+                                            style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '0.75rem' }}>
+                                            ✕ Clear
+                                        </button>
                                     </div>
                                     {activeFileErrors.map((err, i) => (
                                         <div key={i} onClick={() => handleJumpToLine(activeFile, err.line)}

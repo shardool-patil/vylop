@@ -36,11 +36,10 @@ public class EditorController {
         messagingTemplate.convertAndSend("/topic/code/" + roomId, message);
     }
 
-    // FIX: Receive Yjs update as raw String and broadcast as-is
-    // Using Map<String, Object> causes Jackson to re-serialize the base64 update
-    // string differently, corrupting the CRDT binary data
+    // --- FIXED: Accept raw String to prevent Jackson JSON corruption ---
     @MessageMapping("/yjs/{roomId}")
     public void sendYjsUpdate(@DestinationVariable String roomId, @Payload String payload) {
+        // Relaying the exact raw JSON string skips any Java Map/Object conversion errors
         messagingTemplate.convertAndSend("/topic/yjs/" + roomId, payload);
     }
 
