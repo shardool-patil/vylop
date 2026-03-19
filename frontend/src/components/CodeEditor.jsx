@@ -55,7 +55,7 @@ const resolveFileName = (rawFile, files) => {
     return match || rawFile;
 };
 
-// ─── SAFE CRDT Helpers (Fixed Call Stack limits) ──────────────────────────
+// ─── SAFE CRDT Helpers ────────────────────────────────────────────────────
 const toBase64 = (arr) => {
     const bytes = new Uint8Array(arr);
     let binary = '';
@@ -255,7 +255,6 @@ const CodeEditor = () => {
     const isHost = currentUserRole === 'HOST';
     const canEdit = currentUserRole === 'HOST' || currentUserRole === 'EDITOR';
 
-    // Keep ref in sync for event listeners
     useEffect(() => {
         isHostRef.current = currentUserRole === 'HOST';
     }, [currentUserRole]);
@@ -278,7 +277,6 @@ const CodeEditor = () => {
     useEffect(() => {
         const ydoc = ydocRef.current;
         const updateHandler = (update, origin) => {
-            // Send our local changes to STOMP so others receive them
             if (origin !== 'remote' && stompClient.current?.connected) {
                 stompClient.current.send(`/app/yjs/${roomId}`, {}, JSON.stringify({
                     sender: username,
@@ -380,7 +378,10 @@ const CodeEditor = () => {
                         
                         const ytext = ydocRef.current.getText(fileName);
                         if (ytext.toString() === '') {
-                            ytext.insert(0, loadedFiles[fileName]);
+                            // Seed Yjs Document securely within a transaction
+                            ydocRef.current.transact(() => {
+                                ytext.insert(0, loadedFiles[fileName]);
+                            });
                         }
                     });
                     setFiles(newFilesState);
@@ -563,19 +564,23 @@ const CodeEditor = () => {
                 setWsConnected(true);
                 clearTimeout(reconnectTimeout);
 
-                // ─── Listen for Yjs Updates ──────────────────────────────────────
+                // ─── Listen for Yjs Updates (Bulletproofed) ──────────────────────
                 client.subscribe(`/topic/yjs/${roomId}`, (msg) => {
-                    const body = JSON.parse(msg.body);
-                    if (body.type === 'SYNC' && body.sender !== username) {
-                        const update = fromBase64(body.update);
-                        Y.applyUpdate(ydocRef.current, update, 'remote');
-                    } else if (body.type === 'REQUEST_SYNC' && isHostRef.current && body.sender !== username) {
-                        const state = Y.encodeStateAsUpdate(ydocRef.current);
-                        stompClient.current.send(`/app/yjs/${roomId}`, {}, JSON.stringify({
-                            sender: username,
-                            type: 'SYNC',
-                            update: toBase64(state)
-                        }));
+                    try {
+                        const body = JSON.parse(msg.body);
+                        if (body.type === 'SYNC' && body.sender !== username) {
+                            const update = fromBase64(body.update);
+                            Y.applyUpdate(ydocRef.current, update, 'remote');
+                        } else if (body.type === 'REQUEST_SYNC' && isHostRef.current && body.sender !== username) {
+                            const state = Y.encodeStateAsUpdate(ydocRef.current);
+                            stompClient.current.send(`/app/yjs/${roomId}`, {}, JSON.stringify({
+                                sender: username,
+                                type: 'SYNC',
+                                update: toBase64(state)
+                            }));
+                        }
+                    } catch (err) {
+                        console.error("Yjs Sync Parsing Error:", err);
                     }
                 });
 
@@ -690,7 +695,9 @@ const CodeEditor = () => {
         const name = newFileName.trim();
         const initialCode = CODE_SNIPPETS[newFileLang] || `// Start coding in ${name}...`;
         
-        ydocRef.current.getText(name).insert(0, initialCode);
+        ydocRef.current.transact(() => {
+            ydocRef.current.getText(name).insert(0, initialCode);
+        });
 
         setFiles(prev => ({ ...prev, [name]: { name, language: newFileLang, value: initialCode } }));
         if (!openFiles.includes(name)) setOpenFiles(prev => [...prev, name]);
@@ -730,9 +737,12 @@ const CodeEditor = () => {
         const newLang = e.target.value;
         const newCode = CODE_SNIPPETS[newLang];
         
-        const ytext = ydocRef.current.getText(activeFile);
-        ytext.delete(0, ytext.length);
-        ytext.insert(0, newCode);
+        // Massive updates MUST be wrapped in a transaction!
+        ydocRef.current.transact(() => {
+            const ytext = ydocRef.current.getText(activeFile);
+            ytext.delete(0, ytext.length);
+            ytext.insert(0, newCode);
+        });
 
         setFiles(prev => ({ ...prev, [activeFile]: { ...prev[activeFile], language: newLang } }));
         setEditorErrors(prev => { const n = { ...prev }; delete n[activeFile]; return n; });
@@ -1192,7 +1202,8 @@ const CodeEditor = () => {
                             {showMarkdownPreview && files[activeFile]?.language === "markdown" ? (
                                 <Split className="markdown-split" sizes={[50, 50]} minSize={100} gutterSize={8} direction="horizontal" style={{ display: 'flex', flex: 1 }}>
                                     <div style={{ height: '100%' }}>
-                                        <Editor height="100%" language="markdown" theme={editorTheme} onMount={handleEditorDidMount} onChange={handleEditorChange} options={{ readOnly: !canEdit, domReadOnly: !canEdit, minimap: { enabled: false }, fontSize: 14, fontFamily: 'JetBrains Mono', automaticLayout: true, wordWrap: 'on', hover: { above: false }, fixedOverflowWidgets: true }} />
+                                        {/* Added the path prop here */}
+                                        <Editor path={activeFile} height="100%" language="markdown" theme={editorTheme} onMount={handleEditorDidMount} onChange={handleEditorChange} options={{ readOnly: !canEdit, domReadOnly: !canEdit, minimap: { enabled: false }, fontSize: 14, fontFamily: 'JetBrains Mono', automaticLayout: true, wordWrap: 'on', hover: { above: false }, fixedOverflowWidgets: true }} />
                                     </div>
                                     <div className="markdown-preview" style={{ height: '100%', overflowY: 'auto', padding: '20px', backgroundColor: 'var(--bg-dark)', color: 'var(--text-main)' }}>
                                         <ReactMarkdown>{files[activeFile]?.value || ""}</ReactMarkdown>
@@ -1200,7 +1211,8 @@ const CodeEditor = () => {
                                 </Split>
                             ) : (
                                 <div style={{ flex: 1, minHeight: 0, height: '100%' }}>
-                                    <Editor height="100%" language={files[activeFile]?.language === "cpp" ? "cpp" : files[activeFile]?.language} theme={editorTheme} onMount={handleEditorDidMount} onChange={handleEditorChange}
+                                    {/* Added the path prop here */}
+                                    <Editor path={activeFile} height="100%" language={files[activeFile]?.language === "cpp" ? "cpp" : files[activeFile]?.language} theme={editorTheme} onMount={handleEditorDidMount} onChange={handleEditorChange}
                                         options={{ readOnly: !canEdit, domReadOnly: !canEdit, minimap: { enabled: false }, fontSize: 14, fontFamily: 'JetBrains Mono', automaticLayout: true, formatOnPaste: true, glyphMargin: true, hover: { above: false }, fixedOverflowWidgets: true }} />
                                 </div>
                             )}
