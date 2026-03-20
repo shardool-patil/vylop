@@ -55,6 +55,25 @@ const resolveFileName = (rawFile, files) => {
     return match || rawFile;
 };
 
+// ─── SAFE CRDT Helpers ────────────────────────────────────────────────────
+const toBase64 = (arr) => {
+    const bytes = new Uint8Array(arr);
+    let binary = '';
+    for (let i = 0; i < bytes.byteLength; i++) {
+        binary += String.fromCharCode(bytes[i]);
+    }
+    return btoa(binary);
+};
+
+const fromBase64 = (str) => {
+    const binary = atob(str);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+    }
+    return bytes;
+};
+
 // ─── Error Parsers ────────────────────────────────────────────────────────
 
 const parseJavaErrors = (output, files) => {
@@ -170,9 +189,12 @@ const CodeEditor = () => {
     const [username] = useState(() => location.state?.username || localStorage.getItem('username') || '');
     const [roomName, setRoomName] = useState(() => location.state?.roomName || "Syncing Workspace...");
 
-    const [files, setFiles] = useState({});
-    const [openFiles, setOpenFiles] = useState([]);
-    const [activeFile, setActiveFile] = useState(null);
+    // RESTORED INITIAL STATE: Ensure the UI knows "src/Main.java" exists immediately
+    const [files, setFiles] = useState({
+        "src/Main.java": { name: "src/Main.java", language: "java" }
+    });
+    const [openFiles, setOpenFiles] = useState(["src/Main.java"]);
+    const [activeFile, setActiveFile] = useState("src/Main.java");
     
     const [output, setOutput] = useState("");
     const [userInput, setUserInput] = useState(""); 
@@ -225,7 +247,7 @@ const CodeEditor = () => {
     const nextColorIndex = useRef(0);
     const disconnectTimeoutRef = useRef(null); 
 
-    // ─── CRDT State ───────────────────────────────────────────────────────────
+    // ─── CRDT State & Load Flow ───────────────────────────────────────────────
     const ydocRef = useRef(new Y.Doc());
     const awarenessRef = useRef(new Awareness(ydocRef.current));
     const ymonacoBindingRef = useRef(null);
@@ -299,8 +321,7 @@ const CodeEditor = () => {
         const ydoc = ydocRef.current;
         const updateHandler = (update, origin) => {
             if (origin !== 'remote' && stompClient.current?.connected) {
-                const updateArray = Array.from(update); // Convert to plain JSON array
-                console.log(`[VYLOP DEBUG] Sending Yjs update (Size: ${updateArray.length} bytes)`);
+                const updateArray = Array.from(update);
                 stompClient.current.send(`/app/yjs/${roomId}`, {}, JSON.stringify({
                     sender: username,
                     type: 'SYNC',
@@ -434,7 +455,6 @@ const CodeEditor = () => {
         }
 
         const ytext = ydocRef.current.getText(fileName);
-        console.log(`[VYLOP DEBUG] Binding Monaco to file: ${fileName}`);
         
         ymonacoBindingRef.current = new MonacoBinding(
             ytext, 
@@ -548,12 +568,9 @@ const CodeEditor = () => {
                 isConnected.current = true;
                 setWsConnected(true);
                 clearTimeout(reconnectTimeout);
-                console.log("[VYLOP DEBUG] STOMP Connected successfully.");
 
-                // ─── Listen for Yjs Updates (Bulletproof Parsing) ───
                 client.subscribe(`/topic/yjs/${roomId}`, (msg) => {
                     try {
-                        // Protect against double-stringification from backend
                         let payload = msg.body;
                         if (typeof payload === 'string') {
                             payload = JSON.parse(payload);
@@ -563,11 +580,9 @@ const CodeEditor = () => {
                         }
 
                         if (payload.type === 'SYNC' && payload.sender !== username) {
-                            console.log(`[VYLOP DEBUG] Received Yjs update from ${payload.sender}`);
                             const updateArray = new Uint8Array(payload.update);
                             Y.applyUpdate(ydocRef.current, updateArray, 'remote');
                         } else if (payload.type === 'REQUEST_SYNC' && isHostRef.current && payload.sender !== username) {
-                            console.log(`[VYLOP DEBUG] ${payload.sender} requested state. Broadcasting full document.`);
                             const state = Y.encodeStateAsUpdate(ydocRef.current);
                             stompClient.current.send(`/app/yjs/${roomId}`, {}, JSON.stringify({
                                 sender: username,
@@ -599,21 +614,29 @@ const CodeEditor = () => {
                 client.subscribe(`/topic/users/${roomId}`, (msg) => {
                     const body = JSON.parse(msg.body);
                     
+                    // NEW: SEED DEFAULT SNIPPET IF BRAND NEW ROOM
                     if (!ydocInitialized.current) {
                         const me = body.users.find(u => u.username === username);
                         if (me) {
                             if (body.users.length === 1) {
-                                console.log("[VYLOP DEBUG] I am the first user. Seeding from DB.");
                                 ydocRef.current.transact(() => {
-                                    Object.keys(loadedFilesRef.current).forEach(fileName => {
-                                        const ytext = ydocRef.current.getText(fileName);
+                                    const dbFiles = Object.keys(loadedFilesRef.current);
+                                    if (dbFiles.length > 0) {
+                                        dbFiles.forEach(fileName => {
+                                            const ytext = ydocRef.current.getText(fileName);
+                                            if (ytext.length === 0) {
+                                                ytext.insert(0, loadedFilesRef.current[fileName]);
+                                            }
+                                        });
+                                    } else {
+                                        // BRAND NEW ROOM: Inject Java default snippet
+                                        const ytext = ydocRef.current.getText("src/Main.java");
                                         if (ytext.length === 0) {
-                                            ytext.insert(0, loadedFilesRef.current[fileName]);
+                                            ytext.insert(0, CODE_SNIPPETS["java"]);
                                         }
-                                    });
+                                    }
                                 });
                             } else {
-                                console.log("[VYLOP DEBUG] Room already active. Requesting state from host.");
                                 client.send(`/app/yjs/${roomId}`, {}, JSON.stringify({ sender: username, type: 'REQUEST_SYNC' }));
                             }
                             ydocInitialized.current = true;
@@ -768,9 +791,7 @@ const CodeEditor = () => {
         }
     };
 
-    const handleEditorChange = (value) => {
-        // No local state updating to prevent sync loops
-    };
+    const handleEditorChange = () => {};
 
     const handleTypingChange = (e) => {
         setChatMsg(e.target.value);
