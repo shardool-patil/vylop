@@ -20,6 +20,7 @@ import './CodeEditor.css';
 const API_BASE_URL = 'https://vylop.onrender.com';
 const loadedRooms = new Set();
 
+// ─── UPDATED CLEAN SNIPPETS ───────────────────────────────────────────────
 const CODE_SNIPPETS = {
     java: `// Welcome to Vylop!\n\npublic class Main {\n    public static void main(String[] args) {\n        System.out.println("Hello, World!");\n    }\n}`,
     python: `# Welcome to Vylop!\n\ndef main():\n    print("Hello, World!")\n\nif __name__ == "__main__":\n    main()`,
@@ -760,7 +761,6 @@ const CodeEditor = () => {
         let name = newFileName.trim();
         const requiredExt = `.${getExtension(newFileLang)}`;
         
-        // Auto-correct missing or wrong extensions
         if (!name.endsWith(requiredExt)) {
             if (!name.includes('.')) {
                 name += requiredExt; 
@@ -786,7 +786,7 @@ const CodeEditor = () => {
         setIsModalOpen(false); setNewFileName("");
     };
 
-    // ─── FILE UPLOAD VALIDATION ───────────────────────────────────────────────
+    // ─── FILE UPLOAD VALIDATION (WITH EXPLICIT WARNING) ──────────────────────
     const handleFileUpload = (e) => {
         if (!canEdit) return;
         const uploadedFiles = Array.from(e.target.files);
@@ -797,11 +797,12 @@ const CodeEditor = () => {
         const allowedExtensions = ['.java', '.py', '.cpp', '.js', '.ts', '.go', '.rs', '.md', '.txt'];
 
         uploadedFiles.forEach(file => {
-            // Check extension validity before reading
             const ext = file.name.includes('.') ? `.${file.name.split('.').pop()}` : '';
+            
+            // Explicitly block and warn the user if the file isn't supported
             if (!allowedExtensions.includes(ext)) {
-                toast.error(`Skipped ${file.name}: Unsupported file type.`);
-                return; // Skip invalid files
+                toast.error(`Skipped ${file.name}: Please upload a supported file (.java, .py, .cpp, .js, .ts, .go, .rs, .md, .txt)`, { duration: 4000, icon: '🚫' });
+                return; 
             }
 
             const name = `src/${file.name}`; 
@@ -1136,7 +1137,7 @@ const CodeEditor = () => {
                                 placeholder={`e.g. src/utils/script.${getExtension(newFileLang)}`} onKeyDown={(e) => e.key === 'Enter' && handleCreateNewFile()} autoFocus />
                         </div>
                         <div className="modal-actions" style={{ marginBottom: '15px' }}>
-                            <button className="btn btn-primary" style={{ width: '100%' }} onClick={handleCreateNewFile}>Create Empty File</button>
+                            <button className="btn btn-primary" style={{ width: '100%' }} onClick={handleCreateNewFile}>Create New File</button>
                         </div>
 
                         <div style={{ margin: '15px 0', borderBottom: '1px solid var(--border)', textAlign: 'center', lineHeight: '0.1em' }}>
@@ -1144,7 +1145,6 @@ const CodeEditor = () => {
                         </div>
 
                         <div className="modal-field" style={{ textAlign: 'center' }}>
-                            {/* NEW: Accept attribute forces OS dialog to filter allowed types */}
                             <input 
                                 type="file" 
                                 multiple 
