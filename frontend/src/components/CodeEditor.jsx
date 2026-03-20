@@ -22,9 +22,9 @@ const loadedRooms = new Set();
 
 const CODE_SNIPPETS = {
     java: `// Welcome to Vylop!\n\npublic class Main {\n    public static void main(String[] args) {\n        System.out.println("Hello, World!");\n    }\n}`,
-    python: `# Welcome to Vylop!\nimport os\n\ndef main():\n    api_key = os.environ.get("MY_SECRET_KEY")\n    print(f"My secret is: {api_key}")\n\nif __name__ == "__main__":\n    main()`,
+    python: `# Welcome to Vylop!\n\ndef main():\n    print("Hello, World!")\n\nif __name__ == "__main__":\n    main()`,
     cpp: `// Welcome to Vylop!\n\n#include <iostream>\nusing namespace std;\n\nint main() {\n    cout << "Hello, World!" << endl;\n    return 0;\n}`,
-    javascript: `// Welcome to Vylop!\n\nconsole.log("Secret:", process.env.MY_SECRET_KEY);`,
+    javascript: `// Welcome to Vylop!\n\nconsole.log("Hello, World!");`,
     typescript: `// Welcome to Vylop!\n\nconst greeting: string = "Hello, World!";\nconsole.log(greeting);`,
     go: `// Welcome to Vylop!\n\npackage main\n\nimport "fmt"\n\nfunc main() {\n    fmt.Println("Hello, World!")\n}`,
     rust: `// Welcome to Vylop!\n\nfn main() {\n    println!("Hello, World!");\n}`,
@@ -243,6 +243,7 @@ const CodeEditor = () => {
     const userColorMap = useRef({});
     const nextColorIndex = useRef(0);
     const disconnectTimeoutRef = useRef(null); 
+    const fileInputRef = useRef(null); // Reference for the hidden file upload input
 
     // ─── CRDT State & Load Flow ───────────────────────────────────────────────
     const ydocRef = useRef(new Y.Doc());
@@ -771,6 +772,49 @@ const CodeEditor = () => {
         setIsModalOpen(false); setNewFileName("");
     };
 
+    // ─── NEW: HANDLE MULTIPLE FILE UPLOADS ────────────────────────────────────
+    const handleFileUpload = (e) => {
+        if (!canEdit) return;
+        const uploadedFiles = Array.from(e.target.files);
+        if (uploadedFiles.length === 0) return;
+
+        let lastFileName = "";
+
+        uploadedFiles.forEach(file => {
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                const content = event.target.result;
+                
+                // We prefix with src/ so it naturally fits into the explorer UI
+                const name = `src/${file.name}`; 
+                const language = getLanguageFromExtension(name);
+
+                ydocRef.current.transact(() => {
+                    const ytext = ydocRef.current.getText(name);
+                    if (ytext.length > 0) ytext.delete(0, ytext.length); 
+                    ytext.insert(0, content);
+                });
+
+                setFiles(prev => ({ ...prev, [name]: { name, language } }));
+                if (!openFiles.includes(name)) setOpenFiles(prev => [...prev, name]);
+                lastFileName = name;
+
+                if (stompClient.current?.connected) {
+                    stompClient.current.send(`/app/code/${roomId}`, {}, JSON.stringify({ sender: username, language: language, type: "METADATA", fileName: name }));
+                }
+            };
+            reader.readAsText(file);
+        });
+
+        setTimeout(() => {
+            if (lastFileName) setActiveFile(lastFileName);
+        }, 100);
+
+        setIsModalOpen(false);
+        toast.success(`${uploadedFiles.length} file(s) uploaded!`, { icon: '📁' });
+        e.target.value = null; // reset input
+    };
+
     const handleDeleteIconClick = (e, fileName) => {
         e.stopPropagation();
         if (!canEdit) { toast.error("You are in read-only mode"); return; }
@@ -778,11 +822,9 @@ const CodeEditor = () => {
         setFileToDelete(fileName); setIsDeleteModalOpen(true);
     };
 
-    // ─── THE CRDT LEAK FIX ──────────────────────────────────────────────────
     const confirmDeleteFile = () => {
         if (!fileToDelete || !canEdit) return;
         
-        // 1. Completely obliterate the text from Yjs Memory
         ydocRef.current.transact(() => {
             const ytext = ydocRef.current.getText(fileToDelete);
             if (ytext.length > 0) {
@@ -790,7 +832,6 @@ const CodeEditor = () => {
             }
         });
 
-        // 2. Remove from React UI State
         setFiles(prev => { const n = { ...prev }; delete n[fileToDelete]; return n; });
         setOpenFiles(prev => {
             const n = prev.filter(f => f !== fileToDelete);
@@ -799,7 +840,6 @@ const CodeEditor = () => {
         });
         setEditorErrors(prev => { const n = { ...prev }; delete n[fileToDelete]; return n; });
         
-        // 3. Tell other clients to remove it
         if (stompClient.current?.connected) {
             stompClient.current.send(`/app/code/${roomId}`, {}, JSON.stringify({ sender: username, type: "DELETE", fileName: fileToDelete }));
         }
@@ -1048,10 +1088,15 @@ const CodeEditor = () => {
                 </div>
             )}
 
+            {/* COMBINED ADD FILE / UPLOAD MODAL */}
             {isModalOpen && (
                 <div className="modal-overlay">
                     <div className="custom-modal">
-                        <h3>Create New File</h3>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
+                            <h3 style={{ margin: 0 }}>Add File</h3>
+                            <button className="btn btn-icon" onClick={() => setIsModalOpen(false)} style={{ background: 'transparent', color: 'var(--text-muted)' }}>&times;</button>
+                        </div>
+
                         <div className="modal-field">
                             <label>Language</label>
                             <select className="modal-input modern-input" value={newFileLang} onChange={(e) => { setNewFileLang(e.target.value); if (!newFileName || newFileName.includes('.')) setNewFileName(`src/NewFile.${getExtension(e.target.value)}`); }}>
@@ -1061,13 +1106,30 @@ const CodeEditor = () => {
                             </select>
                         </div>
                         <div className="modal-field">
-                            <label>File Name (Use slashes for folders)</label>
+                            <label>File Name</label>
                             <input type="text" className="modal-input modern-input" value={newFileName} onChange={(e) => setNewFileName(e.target.value)}
                                 placeholder={`e.g. src/utils/script.${getExtension(newFileLang)}`} onKeyDown={(e) => e.key === 'Enter' && handleCreateNewFile()} autoFocus />
                         </div>
-                        <div className="modal-actions">
-                            <button className="btn btn-secondary" onClick={() => setIsModalOpen(false)}>Cancel</button>
-                            <button className="btn btn-primary" onClick={handleCreateNewFile}>Create File</button>
+                        <div className="modal-actions" style={{ marginBottom: '15px' }}>
+                            <button className="btn btn-primary" style={{ width: '100%' }} onClick={handleCreateNewFile}>Create Empty File</button>
+                        </div>
+
+                        <div style={{ margin: '15px 0', borderBottom: '1px solid var(--border)', textAlign: 'center', lineHeight: '0.1em' }}>
+                            <span style={{ background: 'var(--bg-overlay)', padding: '0 10px', color: 'var(--text-muted)', fontSize: '0.8rem' }}>OR</span>
+                        </div>
+
+                        <div className="modal-field" style={{ textAlign: 'center' }}>
+                            <input 
+                                type="file" 
+                                multiple 
+                                ref={fileInputRef} 
+                                style={{ display: 'none' }} 
+                                onChange={handleFileUpload} 
+                            />
+                            <button className="btn btn-secondary" style={{ width: '100%', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px' }} onClick={() => fileInputRef.current.click()}>
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+                                Upload File(s) from Computer
+                            </button>
                         </div>
                     </div>
                 </div>
@@ -1212,8 +1274,8 @@ const CodeEditor = () => {
                                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
                             </button>
                         )}
-                        <button className={`btn btn-secondary btn-icon ${!canEdit ? 'opacity-50 cursor-not-allowed' : ''}`} onClick={() => canEdit && setIsModalOpen(true)} title={!canEdit ? getTooltip('EDITOR') : "New File"} disabled={!canEdit}>
-                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="12" y1="18" x2="12" y2="12"></line><line x1="9" y1="15" x2="15" y2="15"></line></svg>
+                        <button className={`btn btn-secondary btn-icon ${!canEdit ? 'opacity-50 cursor-not-allowed' : ''}`} onClick={() => canEdit && setIsModalOpen(true)} title={!canEdit ? getTooltip('EDITOR') : "Add File"} disabled={!canEdit}>
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14M5 12h14"></path></svg>
                         </button>
                         <button className={`btn btn-secondary btn-icon ${!canEdit ? 'opacity-50 cursor-not-allowed' : ''}`} onClick={() => canEdit && setIsSecretsModalOpen(true)} title={!canEdit ? getTooltip('EDITOR') : "Environment Secrets"} disabled={!canEdit}>
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
