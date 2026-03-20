@@ -243,7 +243,7 @@ const CodeEditor = () => {
     const userColorMap = useRef({});
     const nextColorIndex = useRef(0);
     const disconnectTimeoutRef = useRef(null); 
-    const fileInputRef = useRef(null); // Reference for the hidden file upload input
+    const fileInputRef = useRef(null); 
 
     // ─── CRDT State & Load Flow ───────────────────────────────────────────────
     const ydocRef = useRef(new Y.Doc());
@@ -752,10 +752,24 @@ const CodeEditor = () => {
         if (activeFile === fileName) setActiveFile(newOpenFiles.length > 0 ? newOpenFiles[newOpenFiles.length - 1] : null);
     };
 
+    // ─── EXTENSION ENFORCER ───────────────────────────────────────────────────
     const handleCreateNewFile = () => {
         if (!canEdit) return;
         if (!newFileName.trim()) { toast.error("File name cannot be empty"); return; }
-        const name = newFileName.trim();
+        
+        let name = newFileName.trim();
+        const requiredExt = `.${getExtension(newFileLang)}`;
+        
+        // Auto-correct missing or wrong extensions
+        if (!name.endsWith(requiredExt)) {
+            if (!name.includes('.')) {
+                name += requiredExt; 
+            } else {
+                const nameWithoutExt = name.substring(0, name.lastIndexOf('.'));
+                name = nameWithoutExt + requiredExt;
+            }
+        }
+
         const initialCode = CODE_SNIPPETS[newFileLang] || `// Start coding in ${name}...`;
         
         ydocRef.current.transact(() => {
@@ -772,23 +786,32 @@ const CodeEditor = () => {
         setIsModalOpen(false); setNewFileName("");
     };
 
-    // ─── NEW: HANDLE MULTIPLE FILE UPLOADS ────────────────────────────────────
+    // ─── FILE UPLOAD VALIDATION ───────────────────────────────────────────────
     const handleFileUpload = (e) => {
         if (!canEdit) return;
         const uploadedFiles = Array.from(e.target.files);
         if (uploadedFiles.length === 0) return;
 
         let lastFileName = "";
+        let uploadedCount = 0;
+        const allowedExtensions = ['.java', '.py', '.cpp', '.js', '.ts', '.go', '.rs', '.md', '.txt'];
 
         uploadedFiles.forEach(file => {
+            // Check extension validity before reading
+            const ext = file.name.includes('.') ? `.${file.name.split('.').pop()}` : '';
+            if (!allowedExtensions.includes(ext)) {
+                toast.error(`Skipped ${file.name}: Unsupported file type.`);
+                return; // Skip invalid files
+            }
+
+            const name = `src/${file.name}`; 
+            const language = getLanguageFromExtension(name);
+            uploadedCount++;
+
             const reader = new FileReader();
             reader.onload = (event) => {
                 const content = event.target.result;
                 
-                // We prefix with src/ so it naturally fits into the explorer UI
-                const name = `src/${file.name}`; 
-                const language = getLanguageFromExtension(name);
-
                 ydocRef.current.transact(() => {
                     const ytext = ydocRef.current.getText(name);
                     if (ytext.length > 0) ytext.delete(0, ytext.length); 
@@ -811,8 +834,10 @@ const CodeEditor = () => {
         }, 100);
 
         setIsModalOpen(false);
-        toast.success(`${uploadedFiles.length} file(s) uploaded!`, { icon: '📁' });
-        e.target.value = null; // reset input
+        if (uploadedCount > 0) {
+            toast.success(`${uploadedCount} file(s) uploaded!`, { icon: '📁' });
+        }
+        e.target.value = null; 
     };
 
     const handleDeleteIconClick = (e, fileName) => {
@@ -1119,9 +1144,11 @@ const CodeEditor = () => {
                         </div>
 
                         <div className="modal-field" style={{ textAlign: 'center' }}>
+                            {/* NEW: Accept attribute forces OS dialog to filter allowed types */}
                             <input 
                                 type="file" 
                                 multiple 
+                                accept=".java,.py,.cpp,.js,.ts,.go,.rs,.md,.txt"
                                 ref={fileInputRef} 
                                 style={{ display: 'none' }} 
                                 onChange={handleFileUpload} 
