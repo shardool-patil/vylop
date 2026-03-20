@@ -189,12 +189,9 @@ const CodeEditor = () => {
     const [username] = useState(() => location.state?.username || localStorage.getItem('username') || '');
     const [roomName, setRoomName] = useState(() => location.state?.roomName || "Syncing Workspace...");
 
-    // RESTORED INITIAL STATE: Ensure the UI knows "src/Main.java" exists immediately
-    const [files, setFiles] = useState({
-        "src/Main.java": { name: "src/Main.java", language: "java" }
-    });
-    const [openFiles, setOpenFiles] = useState(["src/Main.java"]);
-    const [activeFile, setActiveFile] = useState("src/Main.java");
+    const [files, setFiles] = useState({});
+    const [openFiles, setOpenFiles] = useState([]);
+    const [activeFile, setActiveFile] = useState(null);
     
     const [output, setOutput] = useState("");
     const [userInput, setUserInput] = useState(""); 
@@ -456,6 +453,11 @@ const CodeEditor = () => {
 
         const ytext = ydocRef.current.getText(fileName);
         
+        const currentYjsText = ytext.toString();
+        if (currentYjsText.length > 0 && editor.getValue() === '') {
+            editor.setValue(currentYjsText);
+        }
+        
         ymonacoBindingRef.current = new MonacoBinding(
             ytext, 
             editor.getModel(), 
@@ -614,7 +616,6 @@ const CodeEditor = () => {
                 client.subscribe(`/topic/users/${roomId}`, (msg) => {
                     const body = JSON.parse(msg.body);
                     
-                    // NEW: SEED DEFAULT SNIPPET IF BRAND NEW ROOM
                     if (!ydocInitialized.current) {
                         const me = body.users.find(u => u.username === username);
                         if (me) {
@@ -629,7 +630,6 @@ const CodeEditor = () => {
                                             }
                                         });
                                     } else {
-                                        // BRAND NEW ROOM: Inject Java default snippet
                                         const ytext = ydocRef.current.getText("src/Main.java");
                                         if (ytext.length === 0) {
                                             ytext.insert(0, CODE_SNIPPETS["java"]);
@@ -638,6 +638,27 @@ const CodeEditor = () => {
                                 });
                             } else {
                                 client.send(`/app/yjs/${roomId}`, {}, JSON.stringify({ sender: username, type: 'REQUEST_SYNC' }));
+                                
+                                setTimeout(() => {
+                                    if (ydocRef.current.getText(activeFile || "src/Main.java").length === 0) {
+                                        ydocRef.current.transact(() => {
+                                            const dbFiles = Object.keys(loadedFilesRef.current);
+                                            if (dbFiles.length > 0) {
+                                                dbFiles.forEach(fileName => {
+                                                    const ytext = ydocRef.current.getText(fileName);
+                                                    if (ytext.length === 0) {
+                                                        ytext.insert(0, loadedFilesRef.current[fileName]);
+                                                    }
+                                                });
+                                            } else {
+                                                const ytext = ydocRef.current.getText("src/Main.java");
+                                                if (ytext.length === 0) {
+                                                    ytext.insert(0, CODE_SNIPPETS["java"]);
+                                                }
+                                            }
+                                        });
+                                    }
+                                }, 3000);
                             }
                             ydocInitialized.current = true;
                         }
@@ -757,8 +778,19 @@ const CodeEditor = () => {
         setFileToDelete(fileName); setIsDeleteModalOpen(true);
     };
 
+    // ─── THE CRDT LEAK FIX ──────────────────────────────────────────────────
     const confirmDeleteFile = () => {
         if (!fileToDelete || !canEdit) return;
+        
+        // 1. Completely obliterate the text from Yjs Memory
+        ydocRef.current.transact(() => {
+            const ytext = ydocRef.current.getText(fileToDelete);
+            if (ytext.length > 0) {
+                ytext.delete(0, ytext.length);
+            }
+        });
+
+        // 2. Remove from React UI State
         setFiles(prev => { const n = { ...prev }; delete n[fileToDelete]; return n; });
         setOpenFiles(prev => {
             const n = prev.filter(f => f !== fileToDelete);
@@ -766,11 +798,15 @@ const CodeEditor = () => {
             return n;
         });
         setEditorErrors(prev => { const n = { ...prev }; delete n[fileToDelete]; return n; });
+        
+        // 3. Tell other clients to remove it
         if (stompClient.current?.connected) {
             stompClient.current.send(`/app/code/${roomId}`, {}, JSON.stringify({ sender: username, type: "DELETE", fileName: fileToDelete }));
         }
+        
         toast.success(`${fileToDelete} deleted`);
-        setIsDeleteModalOpen(false); setFileToDelete(null);
+        setIsDeleteModalOpen(false); 
+        setFileToDelete(null);
     };
 
     const handleLanguageSelect = (e) => {

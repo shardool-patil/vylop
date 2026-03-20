@@ -84,6 +84,18 @@ public class WorkspaceService {
         room.setName(roomName);
         roomRepository.save(room);
 
+        // ─── THE FIX: ORPHAN CLEANUP ──────────────────────────────────────────
+        // Fetch all files currently stored in the DB for this room
+        List<RoomFile> existingDbFiles = roomFileRepository.findByRoomId(roomId);
+        
+        // Loop through DB files. If the incoming payload DOES NOT contain them, delete them!
+        for (RoomFile dbFile : existingDbFiles) {
+            if (!files.containsKey(dbFile.getFileName())) {
+                roomFileRepository.delete(dbFile);
+            }
+        }
+        // ──────────────────────────────────────────────────────────────────────
+
         for (Map.Entry<String, String> entry : files.entrySet()) {
             String fileName = entry.getKey();
             String content = entry.getValue();
@@ -147,7 +159,10 @@ public class WorkspaceService {
         if (fileName.endsWith(".py")) return "python";
         if (fileName.endsWith(".cpp")) return "cpp";
         if (fileName.endsWith(".js")) return "javascript";
+        if (fileName.endsWith(".ts")) return "typescript";
         if (fileName.endsWith(".go")) return "go";
+        if (fileName.endsWith(".rs")) return "rust";
+        if (fileName.endsWith(".md")) return "markdown";
         return "plaintext";
     }
 }
