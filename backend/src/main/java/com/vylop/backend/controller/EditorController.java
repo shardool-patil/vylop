@@ -21,7 +21,6 @@ public class EditorController {
     private static final Logger logger = LoggerFactory.getLogger(EditorController.class);
     private final SimpMessagingTemplate messagingTemplate;
     
-    // CHANGED: Now maps RoomId -> (Username -> RoomParticipant)
     private static final Map<String, Map<String, RoomParticipant>> roomUsers = new ConcurrentHashMap<>();
 
     public EditorController(SimpMessagingTemplate messagingTemplate) {
@@ -32,10 +31,16 @@ public class EditorController {
         return roomUsers;
     }
 
-    // ... (Keep your existing sendCode, sendChatMessage, sendTypingEvent, sendCursorEvent methods exactly the same) ...
     @MessageMapping("/code/{roomId}")
     public void sendCode(@DestinationVariable String roomId, @Payload CodeMessage message) {
         messagingTemplate.convertAndSend("/topic/code/" + roomId, message);
+    }
+
+    // --- FIXED: Accept raw String to prevent Jackson JSON corruption ---
+    @MessageMapping("/yjs/{roomId}")
+    public void sendYjsUpdate(@DestinationVariable String roomId, @Payload String payload) {
+        // Relaying the exact raw JSON string skips any Java Map/Object conversion errors
+        messagingTemplate.convertAndSend("/topic/yjs/" + roomId, payload);
     }
 
     @MessageMapping("/chat/{roomId}")
@@ -61,7 +66,6 @@ public class EditorController {
 
         Map<String, RoomParticipant> usersInRoom = roomUsers.computeIfAbsent(roomId, k -> new ConcurrentHashMap<>());
         
-        // PERMISSION LOGIC: First user is HOST, everyone else is READ_ONLY default
         ParticipantRole assignedRole = usersInRoom.isEmpty() ? ParticipantRole.HOST : ParticipantRole.READ_ONLY;
         usersInRoom.put(username, new RoomParticipant(username, assignedRole));
         
@@ -97,11 +101,10 @@ public class EditorController {
         if (usersInRoom != null && usersInRoom.containsKey(username)) {
             RoomParticipant leavingUser = usersInRoom.remove(username);
             
-            // Auto-promote the next person to HOST if the current HOST leaves
             if (!usersInRoom.isEmpty() && leavingUser.getRole() == ParticipantRole.HOST) {
-            RoomParticipant nextHost = usersInRoom.values().iterator().next();
-            nextHost.setRole(ParticipantRole.HOST);
-            logger.info("Host left. Promoted {} to new HOST in Room {}", nextHost.getUsername(), roomId);
+                RoomParticipant nextHost = usersInRoom.values().iterator().next();
+                nextHost.setRole(ParticipantRole.HOST);
+                logger.info("Host left. Promoted {} to new HOST in Room {}", nextHost.getUsername(), roomId);
             }
 
             UserMessage response = new UserMessage(
@@ -113,7 +116,6 @@ public class EditorController {
         }
     }
 
-    // --- NEW: Promote/Demote Endpoint ---
     @MessageMapping("/room/{roomId}/roleChange")
     public void changeRole(@DestinationVariable String roomId, @Payload Map<String, String> payload, SimpMessageHeaderAccessor headerAccessor) {
         String requester = (String) headerAccessor.getSessionAttributes().get("username");
@@ -122,7 +124,6 @@ public class EditorController {
 
         Map<String, RoomParticipant> usersInRoom = roomUsers.get(roomId);
         
-        // SECURITY: Only process if requester is the HOST
         if (usersInRoom != null && usersInRoom.containsKey(requester) && usersInRoom.get(requester).getRole() == ParticipantRole.HOST) {
             if (usersInRoom.containsKey(targetUser)) {
                 usersInRoom.get(targetUser).setRole(ParticipantRole.valueOf(newRoleStr));
@@ -139,7 +140,6 @@ public class EditorController {
         }
     }
 
-    // --- NEW: Kick User Endpoint ---
     @MessageMapping("/room/{roomId}/kick")
     public void kickUser(@DestinationVariable String roomId, @Payload Map<String, String> payload, SimpMessageHeaderAccessor headerAccessor) {
         String requester = (String) headerAccessor.getSessionAttributes().get("username");
@@ -147,13 +147,10 @@ public class EditorController {
 
         Map<String, RoomParticipant> usersInRoom = roomUsers.get(roomId);
         
-        // SECURITY: Only process if requester is the HOST
         if (usersInRoom != null && usersInRoom.containsKey(requester) && usersInRoom.get(requester).getRole() == ParticipantRole.HOST) {
             if (usersInRoom.containsKey(targetUser)) {
-                // Remove them from the map so they stop receiving standard broadcasts
                 usersInRoom.remove(targetUser);
                 
-                // Broadcast a specific KICK event so the frontend knows to force-redirect the target user
                 UserMessage response = new UserMessage(
                     targetUser, 
                     new ArrayList<>(usersInRoom.values()), 
