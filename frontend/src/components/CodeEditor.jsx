@@ -31,24 +31,44 @@ const CODE_SNIPPETS = {
     markdown: `# Welcome to Vylop!\n\nStart writing your markdown here...\n\n- Real-time collaboration\n- Live preview\n- Awesome features` 
 };
 
-// ─── MOCK PROBLEM DATABASE ────────────────────────────────────────────────
+// ─── EXPANDED MOCK PROBLEM DATABASE ───────────────────────────────────────
 const MOCK_PROBLEMS = {
     "two-sum": {
         id: "two-sum",
         title: "1. Two Sum",
         difficulty: "Easy",
+        topic: "Arrays & Hashing",
         description: "Given an array of integers `nums` and an integer `target`, return indices of the two numbers such that they add up to `target`.\n\nYou may assume that each input would have **exactly one solution**, and you may not use the same element twice.\n\nYou can return the answer in any order.",
         examples: [
             { input: "nums = [2,7,11,15], target = 9", output: "[0,1]", explanation: "Because nums[0] + nums[1] == 9, we return [0, 1]." },
-            { input: "nums = [3,2,4], target = 6", output: "[1,2]" },
-            { input: "nums = [3,3], target = 6", output: "[0,1]" }
+            { input: "nums = [3,2,4], target = 6", output: "[1,2]" }
         ],
-        constraints: [
-            "2 <= nums.length <= 10^4",
-            "-10^9 <= nums[i] <= 10^9",
-            "-10^9 <= target <= 10^9",
-            "Only one valid answer exists."
-        ]
+        constraints: ["2 <= nums.length <= 10^4", "-10^9 <= nums[i] <= 10^9", "-10^9 <= target <= 10^9", "Only one valid answer exists."]
+    },
+    "valid-parentheses": {
+        id: "valid-parentheses",
+        title: "20. Valid Parentheses",
+        difficulty: "Easy",
+        topic: "Stack",
+        description: "Given a string `s` containing just the characters `'('`, `')'`, `'{'`, `'}'`, `'['` and `']'`, determine if the input string is valid.\n\nAn input string is valid if:\n1. Open brackets must be closed by the same type of brackets.\n2. Open brackets must be closed in the correct order.\n3. Every close bracket has a corresponding open bracket of the same type.",
+        examples: [
+            { input: "s = \"()\"", output: "true" },
+            { input: "s = \"()[]{}\"", output: "true" },
+            { input: "s = \"(]\"", output: "false" }
+        ],
+        constraints: ["1 <= s.length <= 10^4", "s consists of parentheses only '()[]{}'."]
+    },
+    "climbing-stairs": {
+        id: "climbing-stairs",
+        title: "70. Climbing Stairs",
+        difficulty: "Medium",
+        topic: "Dynamic Programming",
+        description: "You are climbing a staircase. It takes `n` steps to reach the top.\n\nEach time you can either climb `1` or `2` steps. In how many distinct ways can you climb to the top?",
+        examples: [
+            { input: "n = 2", output: "2", explanation: "1. 1 step + 1 step\n2. 2 steps" },
+            { input: "n = 3", output: "3", explanation: "1. 1 step + 1 step + 1 step\n2. 1 step + 2 steps\n3. 2 steps + 1 step" }
+        ],
+        constraints: ["1 <= n <= 45"]
     }
 };
 
@@ -216,6 +236,8 @@ const CodeEditor = () => {
     
     // NEW INTERVIEW STATE
     const [currentProblem, setCurrentProblem] = useState(null);
+    const [isQuestionBankOpen, setIsQuestionBankOpen] = useState(false);
+    const [problemSearch, setProblemSearch] = useState("");
     
     const [output, setOutput] = useState("");
     const [userInput, setUserInput] = useState(""); 
@@ -254,7 +276,6 @@ const CodeEditor = () => {
     const [isSecretsModalOpen, setIsSecretsModalOpen] = useState(false);
     const [secrets, setSecrets] = useState([{ key: '', value: '' }]);
 
-    // NEW LEAVE MODAL STATE
     const [isLeaveModalOpen, setIsLeaveModalOpen] = useState(false);
 
     const editorRef = useRef(null);
@@ -272,7 +293,6 @@ const CodeEditor = () => {
     const disconnectTimeoutRef = useRef(null); 
     const fileInputRef = useRef(null); 
 
-    // ─── CRDT State & Load Flow ───────────────────────────────────────────────
     const ydocRef = useRef(new Y.Doc());
     const awarenessRef = useRef(new Awareness(ydocRef.current));
     const ymonacoBindingRef = useRef(null);
@@ -303,7 +323,6 @@ const CodeEditor = () => {
         return userColorMap.current[user];
     };
 
-    // ─── 1. FETCH DB DATA ────────────────────────────────────────────────────
     useEffect(() => {
         let isMounted = true;
         const fetchWorkspaceData = async () => {
@@ -341,7 +360,6 @@ const CodeEditor = () => {
         return () => { isMounted = false; loadedRooms.delete(roomId); };
     }, [roomId, username]);
 
-    // ─── 2. BROADCAST YJS UPDATES ────────────────────────────────────────────
     useEffect(() => {
         const ydoc = ydocRef.current;
         const updateHandler = (update, origin) => {
@@ -358,7 +376,6 @@ const CodeEditor = () => {
         return () => ydoc.off('update', updateHandler);
     }, [roomId, username]);
 
-    // ─── Apply decorations + inline view zones ────────────────────────────────
     const applyDecorations = useCallback((fileName) => {
         if (!editorRef.current || !monacoRef.current) return;
         const monaco = monacoRef.current;
@@ -570,6 +587,31 @@ const CodeEditor = () => {
         }
     };
 
+    // ─── BROADCAST PROBLEM SYNC TO ROOM ──────────────────────────────────────
+    const handlePushProblem = (problemId) => {
+        if (stompClient.current?.connected && isHost) {
+            // We reuse the existing /app/code endpoint by adding a custom "PROBLEM_SYNC" type!
+            stompClient.current.send(`/app/code/${roomId}`, {}, JSON.stringify({ 
+                sender: username, 
+                type: "PROBLEM_SYNC", 
+                fileName: problemId 
+            }));
+            setIsQuestionBankOpen(false);
+            toast.success("Problem pushed to candidate!", { icon: '🚀' });
+        }
+    };
+
+    const handleClearProblem = () => {
+        if (stompClient.current?.connected && isHost) {
+            stompClient.current.send(`/app/code/${roomId}`, {}, JSON.stringify({ 
+                sender: username, 
+                type: "PROBLEM_SYNC", 
+                fileName: "CLEAR" 
+            }));
+            toast("Problem cleared from workspace.");
+        }
+    };
+
     // ─── 3. WEBSOCKET CONNECTION & RECEIVING ─────────────────────────────────
     useEffect(() => {
         if (!username || !isWorkspaceLoaded) return; 
@@ -623,6 +665,21 @@ const CodeEditor = () => {
 
                 client.subscribe(`/topic/code/${roomId}`, (msg) => {
                     const body = JSON.parse(msg.body);
+                    
+                    // ─── INTERCEPT PROBLEM SYNC MESSAGE ───
+                    if (body.type === "PROBLEM_SYNC") {
+                        if (body.fileName === "CLEAR") {
+                            setCurrentProblem(null);
+                        } else if (MOCK_PROBLEMS[body.fileName]) {
+                            setCurrentProblem(MOCK_PROBLEMS[body.fileName]);
+                            // If candidate is seeing it for the first time
+                            if (body.sender !== username) {
+                                toast(`The Host has assigned a new problem: ${MOCK_PROBLEMS[body.fileName].title}`, { icon: '📝', duration: 4000 });
+                            }
+                        }
+                        return; // Stop processing further code logic
+                    }
+
                     if (body.type === "DELETE") {
                         setFiles(prev => { const n = { ...prev }; delete n[body.fileName]; return n; });
                         setOpenFiles(prev => {
@@ -1098,6 +1155,81 @@ const CodeEditor = () => {
     return (
         <div className="app-container">
 
+            {/* ─── NEW QUESTION BANK MODAL ─── */}
+            {isQuestionBankOpen && isHost && (
+                <div className="modal-overlay" style={{ zIndex: 3000 }}>
+                    <div className="custom-modal" style={{ width: '700px', maxWidth: '95%' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+                            <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#58a6ff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+                                Interview Question Bank
+                            </h3>
+                            <button className="btn btn-icon" onClick={() => setIsQuestionBankOpen(false)} style={{ background: 'transparent', color: 'var(--text-muted)' }}>&times;</button>
+                        </div>
+                        
+                        <div style={{ marginBottom: '15px' }}>
+                            <input 
+                                type="text" 
+                                className="modern-input" 
+                                placeholder="Search problems by title or topic..." 
+                                value={problemSearch}
+                                onChange={(e) => setProblemSearch(e.target.value)}
+                            />
+                        </div>
+
+                        <div style={{ maxHeight: '400px', overflowY: 'auto', border: '1px solid var(--border)', borderRadius: '8px', backgroundColor: 'var(--bg-dark)' }}>
+                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem' }}>
+                                <thead>
+                                    <tr style={{ backgroundColor: 'rgba(255,255,255,0.05)', textAlign: 'left', color: 'var(--text-muted)' }}>
+                                        <th style={{ padding: '12px 15px', borderBottom: '1px solid var(--border)' }}>Title</th>
+                                        <th style={{ padding: '12px 15px', borderBottom: '1px solid var(--border)' }}>Topic</th>
+                                        <th style={{ padding: '12px 15px', borderBottom: '1px solid var(--border)' }}>Difficulty</th>
+                                        <th style={{ padding: '12px 15px', borderBottom: '1px solid var(--border)', textAlign: 'right' }}>Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {Object.values(MOCK_PROBLEMS)
+                                        .filter(p => p.title.toLowerCase().includes(problemSearch.toLowerCase()) || p.topic.toLowerCase().includes(problemSearch.toLowerCase()))
+                                        .map((problem) => (
+                                        <tr key={problem.id} style={{ borderBottom: '1px solid var(--border)', transition: 'background-color 0.2s' }} onMouseOver={e => e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.02)'} onMouseOut={e => e.currentTarget.style.backgroundColor = 'transparent'}>
+                                            <td style={{ padding: '12px 15px', color: '#e1e4e8', fontWeight: '500' }}>{problem.title}</td>
+                                            <td style={{ padding: '12px 15px', color: 'var(--text-muted)' }}>{problem.topic}</td>
+                                            <td style={{ padding: '12px 15px' }}>
+                                                <span style={{ 
+                                                    padding: '4px 8px', borderRadius: '12px', fontSize: '0.75rem', fontWeight: 'bold', textTransform: 'uppercase',
+                                                    backgroundColor: problem.difficulty === 'Easy' ? 'rgba(46,160,67,0.15)' : problem.difficulty === 'Medium' ? 'rgba(210,153,34,0.15)' : 'rgba(218,54,51,0.15)',
+                                                    color: problem.difficulty === 'Easy' ? '#3fb950' : problem.difficulty === 'Medium' ? '#d29922' : '#da3633'
+                                                }}>
+                                                    {problem.difficulty}
+                                                </span>
+                                            </td>
+                                            <td style={{ padding: '12px 15px', textAlign: 'right' }}>
+                                                {currentProblem?.id === problem.id ? (
+                                                    <span style={{ fontSize: '0.8rem', color: '#3fb950', fontWeight: 'bold', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '5px' }}>
+                                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg> Active
+                                                    </span>
+                                                ) : (
+                                                    <button className="btn btn-primary" style={{ padding: '6px 12px', fontSize: '0.8rem' }} onClick={() => handlePushProblem(problem.id)}>
+                                                        Push to Room
+                                                    </button>
+                                                )}
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                        <div style={{ marginTop: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: 0 }}>Candidate's editor will update instantly.</p>
+                            <div style={{ display: 'flex', gap: '10px' }}>
+                                {currentProblem && <button className="btn btn-secondary" onClick={handleClearProblem}>Clear Active Problem</button>}
+                                <button className="btn btn-secondary" onClick={() => setIsQuestionBankOpen(false)}>Close</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* LEAVE CONFIRMATION MODAL */}
             {isLeaveModalOpen && (
                 <div className="modal-overlay" style={{ zIndex: 2000 }}>
@@ -1347,11 +1479,11 @@ const CodeEditor = () => {
                     </div>
                     <div className="toolbar-group right-controls">
                         
-                        {/* ─── NEW: TEMPORARY QUESTION BANK TOGGLE (HOST ONLY) ─── */}
+                        {/* ─── NEW: QUESTION BANK TOGGLE (HOST ONLY) ─── */}
                         {isHost && (
-                            <button className={`btn btn-icon ${currentProblem ? 'btn-primary' : 'btn-secondary'}`} 
-                                    onClick={() => setCurrentProblem(currentProblem ? null : MOCK_PROBLEMS["two-sum"])} 
-                                    title="Toggle Problem Bank (Test)" 
+                            <button className={`btn btn-icon ${isQuestionBankOpen ? 'btn-primary' : 'btn-secondary'}`} 
+                                    onClick={() => setIsQuestionBankOpen(true)} 
+                                    title="Open Question Bank" 
                                     style={{marginRight: '10px'}}>
                                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
                             </button>
@@ -1421,7 +1553,7 @@ const CodeEditor = () => {
                         <p style={{fontSize: '0.9rem', marginTop: '10px'}}>Select a file from the explorer to start coding.</p>
                     </div>
                 ) : (
-                    <Split className={`editor-split ${splitDirection}`} sizes={currentProblem ? [30, 45, 25] : [70, 30]} minSize={250} gutterSize={8} direction={splitDirection}>
+                    <Split className={`editor-split ${splitDirection}`} sizes={splitSizes} minSize={250} gutterSize={8} direction={splitDirection}>
                         
                         {/* ─── PROBLEM DESCRIPTION PANEL ─── */}
                         {currentProblem && (
