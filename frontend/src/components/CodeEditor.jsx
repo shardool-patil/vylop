@@ -20,7 +20,6 @@ import './CodeEditor.css';
 const API_BASE_URL = 'https://vylop.onrender.com';
 const loadedRooms = new Set();
 
-// ─── UPDATED CLEAN SNIPPETS ───────────────────────────────────────────────
 const CODE_SNIPPETS = {
     java: `// Welcome to Vylop!\n\npublic class Main {\n    public static void main(String[] args) {\n        System.out.println("Hello, World!");\n    }\n}`,
     python: `# Welcome to Vylop!\n\ndef main():\n    print("Hello, World!")\n\nif __name__ == "__main__":\n    main()`,
@@ -30,6 +29,27 @@ const CODE_SNIPPETS = {
     go: `// Welcome to Vylop!\n\npackage main\n\nimport "fmt"\n\nfunc main() {\n    fmt.Println("Hello, World!")\n}`,
     rust: `// Welcome to Vylop!\n\nfn main() {\n    println!("Hello, World!");\n}`,
     markdown: `# Welcome to Vylop!\n\nStart writing your markdown here...\n\n- Real-time collaboration\n- Live preview\n- Awesome features` 
+};
+
+// ─── MOCK PROBLEM DATABASE ────────────────────────────────────────────────
+const MOCK_PROBLEMS = {
+    "two-sum": {
+        id: "two-sum",
+        title: "1. Two Sum",
+        difficulty: "Easy",
+        description: "Given an array of integers `nums` and an integer `target`, return indices of the two numbers such that they add up to `target`.\n\nYou may assume that each input would have **exactly one solution**, and you may not use the same element twice.\n\nYou can return the answer in any order.",
+        examples: [
+            { input: "nums = [2,7,11,15], target = 9", output: "[0,1]", explanation: "Because nums[0] + nums[1] == 9, we return [0, 1]." },
+            { input: "nums = [3,2,4], target = 6", output: "[1,2]" },
+            { input: "nums = [3,3], target = 6", output: "[0,1]" }
+        ],
+        constraints: [
+            "2 <= nums.length <= 10^4",
+            "-10^9 <= nums[i] <= 10^9",
+            "-10^9 <= target <= 10^9",
+            "Only one valid answer exists."
+        ]
+    }
 };
 
 const getExtension = (lang) => {
@@ -193,6 +213,9 @@ const CodeEditor = () => {
     const [files, setFiles] = useState({});
     const [openFiles, setOpenFiles] = useState([]);
     const [activeFile, setActiveFile] = useState(null);
+    
+    // NEW INTERVIEW STATE
+    const [currentProblem, setCurrentProblem] = useState(null);
     
     const [output, setOutput] = useState("");
     const [userInput, setUserInput] = useState(""); 
@@ -753,7 +776,6 @@ const CodeEditor = () => {
         if (activeFile === fileName) setActiveFile(newOpenFiles.length > 0 ? newOpenFiles[newOpenFiles.length - 1] : null);
     };
 
-    // ─── EXTENSION ENFORCER ───────────────────────────────────────────────────
     const handleCreateNewFile = () => {
         if (!canEdit) return;
         if (!newFileName.trim()) { toast.error("File name cannot be empty"); return; }
@@ -786,7 +808,6 @@ const CodeEditor = () => {
         setIsModalOpen(false); setNewFileName("");
     };
 
-    // ─── FILE UPLOAD VALIDATION (WITH EXPLICIT WARNING) ──────────────────────
     const handleFileUpload = (e) => {
         if (!canEdit) return;
         const uploadedFiles = Array.from(e.target.files);
@@ -798,8 +819,6 @@ const CodeEditor = () => {
 
         uploadedFiles.forEach(file => {
             const ext = file.name.includes('.') ? `.${file.name.split('.').pop()}` : '';
-            
-            // Explicitly block and warn the user if the file isn't supported
             if (!allowedExtensions.includes(ext)) {
                 toast.error(`Skipped ${file.name}: Please upload a supported file (.java, .py, .cpp, .js, .ts, .go, .rs, .md, .txt)`, { duration: 4000, icon: '🚫' });
                 return; 
@@ -1074,6 +1093,9 @@ const CodeEditor = () => {
 
     const activeFileErrors = editorErrors[activeFile] || [];
 
+    // Dynamically calculate sizes. If there's a problem loaded, it becomes a 3-way split: [Problem (30%), Editor (45%), Console (25%)]
+    const splitSizes = currentProblem ? [30, 45, 25] : [70, 30];
+
     return (
         <div className="app-container">
             {isSecretsModalOpen && (
@@ -1114,7 +1136,6 @@ const CodeEditor = () => {
                 </div>
             )}
 
-            {/* COMBINED ADD FILE / UPLOAD MODAL */}
             {isModalOpen && (
                 <div className="modal-overlay">
                     <div className="custom-modal">
@@ -1296,6 +1317,17 @@ const CodeEditor = () => {
                         <span style={{fontWeight: 'bold', fontSize: '0.9rem', color: 'var(--text-main)'}}>{roomName}</span>
                     </div>
                     <div className="toolbar-group right-controls">
+                        
+                        {/* ─── NEW: TEMPORARY QUESTION BANK TOGGLE (HOST ONLY) ─── */}
+                        {isHost && (
+                            <button className={`btn btn-icon ${currentProblem ? 'btn-primary' : 'btn-secondary'}`} 
+                                    onClick={() => setCurrentProblem(currentProblem ? null : MOCK_PROBLEMS["two-sum"])} 
+                                    title="Toggle Problem Bank (Test)" 
+                                    style={{marginRight: '10px'}}>
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+                            </button>
+                        )}
+
                         {files[activeFile]?.language === "markdown" && (
                             <button className={`btn btn-icon ${showMarkdownPreview ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setShowMarkdownPreview(!showMarkdownPreview)} title="Toggle Markdown Preview" style={{marginRight: '10px'}}>
                                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
@@ -1360,7 +1392,53 @@ const CodeEditor = () => {
                         <p style={{fontSize: '0.9rem', marginTop: '10px'}}>Select a file from the explorer to start coding.</p>
                     </div>
                 ) : (
-                    <Split className={`editor-split ${splitDirection}`} sizes={[70, 30]} minSize={250} gutterSize={8} direction={splitDirection}>
+                    // ─── UPDATED SPLIT PANE (SUPPORTS 3 PANELS) ───
+                    <Split className={`editor-split ${splitDirection}`} sizes={currentProblem ? [30, 45, 25] : [70, 30]} minSize={250} gutterSize={8} direction={splitDirection}>
+                        
+                        {/* ─── NEW PROBLEM DESCRIPTION PANEL ─── */}
+                        {currentProblem && (
+                            <div className="problem-wrapper" style={{ display: 'flex', flexDirection: 'column', backgroundColor: 'var(--bg-dark)', color: 'var(--text-main)', height: '100%', overflowY: 'auto', padding: '20px' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '15px' }}>
+                                    <h2 style={{ margin: 0, fontSize: '1.4rem' }}>{currentProblem.title}</h2>
+                                    <span style={{ 
+                                        padding: '4px 8px', borderRadius: '12px', fontSize: '0.75rem', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '0.5px',
+                                        backgroundColor: currentProblem.difficulty === 'Easy' ? 'rgba(46,160,67,0.15)' : currentProblem.difficulty === 'Medium' ? 'rgba(210,153,34,0.15)' : 'rgba(218,54,51,0.15)',
+                                        color: currentProblem.difficulty === 'Easy' ? '#3fb950' : currentProblem.difficulty === 'Medium' ? '#d29922' : '#da3633'
+                                    }}>
+                                        {currentProblem.difficulty}
+                                    </span>
+                                </div>
+                                
+                                <div className="markdown-preview" style={{ fontSize: '0.95rem', lineHeight: '1.6', borderBottom: '1px solid var(--border)', paddingBottom: '15px' }}>
+                                    <ReactMarkdown>{currentProblem.description}</ReactMarkdown>
+                                </div>
+                                
+                                <div style={{ marginTop: '20px' }}>
+                                    {currentProblem.examples.map((ex, i) => (
+                                        <div key={i} style={{ marginBottom: '20px' }}>
+                                            <strong style={{ fontSize: '0.9rem', color: '#e1e4e8' }}>Example {i + 1}:</strong>
+                                            <div style={{ backgroundColor: 'rgba(255,255,255,0.03)', borderLeft: '3px solid var(--border)', padding: '12px', borderRadius: '0 8px 8px 0', marginTop: '8px', fontFamily: 'JetBrains Mono, monospace', fontSize: '0.85rem' }}>
+                                                <div style={{ marginBottom: '4px' }}><span style={{ opacity: 0.6 }}>Input:</span> <span style={{ color: '#e1e4e8' }}>{ex.input}</span></div>
+                                                <div style={{ marginBottom: ex.explanation ? '4px' : '0' }}><span style={{ opacity: 0.6 }}>Output:</span> <span style={{ color: '#e1e4e8' }}>{ex.output}</span></div>
+                                                {ex.explanation && <div><span style={{ opacity: 0.6 }}>Explanation:</span> <span style={{ color: '#e1e4e8' }}>{ex.explanation}</span></div>}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                                
+                                <div style={{ marginTop: '10px' }}>
+                                    <strong style={{ fontSize: '0.9rem', color: '#e1e4e8' }}>Constraints:</strong>
+                                    <ul style={{ paddingLeft: '20px', marginTop: '10px', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                                        {currentProblem.constraints.map((c, i) => (
+                                            <li key={i} style={{ marginBottom: '6px' }}>
+                                                <code style={{ backgroundColor: 'rgba(255,255,255,0.05)', padding: '3px 6px', borderRadius: '4px', color: '#e1e4e8', fontFamily: 'JetBrains Mono, monospace' }}>{c}</code>
+                                            </li>
+                                        ))}
+                                    </ul>
+                                </div>
+                            </div>
+                        )}
+
                         <div className="editor-wrapper" style={{ display: 'flex', flexDirection: 'column', position: 'relative' }}>
                             {showMarkdownPreview && files[activeFile]?.language === "markdown" ? (
                                 <Split className="markdown-split" sizes={[50, 50]} minSize={100} gutterSize={8} direction="horizontal" style={{ display: 'flex', flex: 1 }}>
