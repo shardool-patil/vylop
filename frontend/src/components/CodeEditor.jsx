@@ -254,6 +254,9 @@ const CodeEditor = () => {
     const [isSecretsModalOpen, setIsSecretsModalOpen] = useState(false);
     const [secrets, setSecrets] = useState([{ key: '', value: '' }]);
 
+    // NEW LEAVE MODAL STATE
+    const [isLeaveModalOpen, setIsLeaveModalOpen] = useState(false);
+
     const editorRef = useRef(null);
     const monacoRef = useRef(null);
     const vimInstanceRef = useRef(null); 
@@ -421,10 +424,6 @@ const CodeEditor = () => {
             }
         };
     }, [activeFile, editorErrors, applyDecorations]);
-
-    useEffect(() => {
-        if (!username) { toast.error("Please login first"); navigate('/auth'); }
-    }, [username, navigate]);
 
     useEffect(() => {
         const handleResize = () => setSplitDirection(window.innerWidth < 900 ? 'vertical' : 'horizontal');
@@ -1093,11 +1092,41 @@ const CodeEditor = () => {
 
     const activeFileErrors = editorErrors[activeFile] || [];
 
-    // Dynamically calculate sizes. If there's a problem loaded, it becomes a 3-way split: [Problem (30%), Editor (45%), Console (25%)]
+    // Dynamically calculate sizes. If there's a problem loaded, it becomes a 3-way split
     const splitSizes = currentProblem ? [30, 45, 25] : [70, 30];
 
     return (
         <div className="app-container">
+
+            {/* LEAVE CONFIRMATION MODAL */}
+            {isLeaveModalOpen && (
+                <div className="modal-overlay" style={{ zIndex: 2000 }}>
+                    <div className="custom-modal" style={{ width: '420px' }}>
+                        <h3 style={{ margin: '0 0 15px 0' }}>Leave Workspace</h3>
+                        <p style={{color: 'var(--text-muted)', fontSize: '0.95rem', margin: '5px 0 20px 0', lineHeight: '1.5'}}>
+                            Do you want to explicitly save this workspace to the cloud before you leave? <br/><br/>
+                            If you leave without saving, this temporary room and all its files will be permanently discarded.
+                        </p>
+                        <div className="modal-actions" style={{ flexDirection: 'column', gap: '10px', marginTop: '20px' }}>
+                            <button className="btn btn-primary" style={{ width: '100%', padding: '12px' }} onClick={async () => { 
+                                await saveWorkspace(); 
+                                navigate('/'); 
+                            }}>Save & Leave</button>
+                            
+                            <button className="btn btn-danger" style={{ width: '100%', padding: '12px' }} onClick={async () => {
+                                try {
+                                    await axios.delete(`${API_BASE_URL}/api/workspace/${roomId}/delete?username=${encodeURIComponent(username)}`);
+                                    toast.success("Temporary workspace discarded.");
+                                } catch (e) { console.error(e); }
+                                navigate('/');
+                            }}>Leave Without Saving (Discard Room)</button>
+                            
+                            <button className="btn btn-secondary" style={{ width: '100%', padding: '12px' }} onClick={() => setIsLeaveModalOpen(false)}>Cancel</button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {isSecretsModalOpen && (
                 <div className="modal-overlay">
                     <div className="custom-modal" style={{ width: '450px' }}>
@@ -1303,7 +1332,7 @@ const CodeEditor = () => {
 
                 <div style={{ flexShrink: 0, marginTop: 'auto', borderTop: '1px solid var(--border)', padding: '15px', display: 'flex', gap: '10px' }}>
                     <button className="btn btn-secondary" style={{flex:1, padding: '8px', fontSize: '0.85rem'}} onClick={copyRoomLink}>Copy Link</button>
-                    <button className="btn btn-danger" style={{flex:1, padding: '8px', fontSize: '0.85rem'}} onClick={() => navigate('/')}>Leave</button>
+                    <button className="btn btn-danger" style={{flex:1, padding: '8px', fontSize: '0.85rem'}} onClick={() => isHost ? setIsLeaveModalOpen(true) : navigate('/')}>Leave</button>
                 </div>
             </div>
 
@@ -1392,10 +1421,9 @@ const CodeEditor = () => {
                         <p style={{fontSize: '0.9rem', marginTop: '10px'}}>Select a file from the explorer to start coding.</p>
                     </div>
                 ) : (
-                    // ─── UPDATED SPLIT PANE (SUPPORTS 3 PANELS) ───
                     <Split className={`editor-split ${splitDirection}`} sizes={currentProblem ? [30, 45, 25] : [70, 30]} minSize={250} gutterSize={8} direction={splitDirection}>
                         
-                        {/* ─── NEW PROBLEM DESCRIPTION PANEL ─── */}
+                        {/* ─── PROBLEM DESCRIPTION PANEL ─── */}
                         {currentProblem && (
                             <div className="problem-wrapper" style={{ display: 'flex', flexDirection: 'column', backgroundColor: 'var(--bg-dark)', color: 'var(--text-main)', height: '100%', overflowY: 'auto', padding: '20px' }}>
                                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '15px' }}>
@@ -1457,7 +1485,7 @@ const CodeEditor = () => {
                             )}
                             <div id="vim-status-bar" className="vim-status-bar"></div>
 
-                            {/* Error Panel — absolute overlay so editor height never changes */}
+                            {/* Error Panel */}
                             {activeFileErrors.length > 0 && (
                                 <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, maxHeight: '140px', overflowY: 'auto', backgroundColor: '#0d1117ee', borderTop: '1px solid #ff6b6b44', backdropFilter: 'blur(4px)', zIndex: 10 }}>
                                     <div style={{ padding: '4px 12px', fontSize: '0.65rem', color: '#ff6b6b', letterSpacing: '0.5px', fontWeight: 'bold', textTransform: 'uppercase', display: 'flex', justifyContent: 'space-between', alignItems: 'center', position: 'sticky', top: 0, backgroundColor: '#0d1117ee', zIndex: 1 }}>

@@ -17,6 +17,8 @@ const Home = () => {
     // Modal & Menu States
     const [workspaceToDelete, setWorkspaceToDelete] = useState(null);
     const [isJoinModalOpen, setIsJoinModalOpen] = useState(false);
+    const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+    const [createRoomName, setCreateRoomName] = useState('My Workspace');
     const [joinRoomId, setJoinRoomId] = useState('');
     const [joinRoomName, setJoinRoomName] = useState('');
     const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
@@ -50,14 +52,18 @@ const Home = () => {
         navigate('/auth');
     };
 
-    // FIXED: Now registers the room in the DB before navigating so it can be saved!
     const handleCreateNew = async () => {
+        if (!createRoomName.trim()) {
+            toast.error("Please enter a workspace name");
+            return;
+        }
+
         const id = uuidv4();
-        const defaultRoomName = "Dev Workspace";
+        const finalRoomName = createRoomName.trim();
 
         try {
             await axios.post(
-                `${API_BASE_URL}/api/workspace/${id}/register?username=${encodeURIComponent(username)}&roomName=${encodeURIComponent(defaultRoomName)}`
+                `${API_BASE_URL}/api/workspace/${id}/register?username=${encodeURIComponent(username)}&roomName=${encodeURIComponent(finalRoomName)}`
             );
         } catch (error) {
             console.warn("Could not pre-register room name:", error);
@@ -66,7 +72,7 @@ const Home = () => {
         navigate(`/room/${id}`, {
             state: {
                 username,
-                roomName: defaultRoomName,
+                roomName: finalRoomName,
             },
         });
     };
@@ -139,6 +145,25 @@ const Home = () => {
                         <div className="modal-actions">
                             <button className="btn btn-secondary" onClick={() => setWorkspaceToDelete(null)}>Cancel</button>
                             <button className="btn btn-danger" onClick={confirmDeleteWorkspace}>Delete</button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* CREATE MODAL */}
+            {isCreateModalOpen && (
+                <div className="modal-overlay" onClick={() => setIsCreateModalOpen(false)}>
+                    <div className="custom-modal" onClick={(e) => e.stopPropagation()}>
+                        <h3 style={{marginTop: 0, marginBottom: '15px'}}>Create Workspace</h3>
+                        <p style={{ fontSize: '0.85rem', color: '#8b949e', marginBottom: '20px', lineHeight: '1.4' }}>
+                            Give your new sandbox a name.
+                        </p>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+                            <input type="text" className="modern-input" placeholder="Workspace Name" value={createRoomName} onChange={(e) => setCreateRoomName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleCreateNew()} autoFocus />
+                        </div>
+                        <div className="modal-actions">
+                            <button className="btn btn-secondary" onClick={() => setIsCreateModalOpen(false)}>Cancel</button>
+                            <button className="btn btn-primary" onClick={handleCreateNew}>Create & Enter</button>
                         </div>
                     </div>
                 </div>
@@ -221,7 +246,7 @@ const Home = () => {
                             Instantly spin up a new CRDT-powered workspace. Perfect for pair programming, debugging, or testing out an algorithm.
                         </p>
                         <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
-                            <button className="btn btn-primary" style={{ flex: 1 }} onClick={handleCreateNew}>Create Room</button>
+                            <button className="btn btn-primary" style={{ flex: 1 }} onClick={() => setIsCreateModalOpen(true)}>Create Room</button>
                             <button className="btn btn-secondary" style={{ flex: 1 }} onClick={() => setIsJoinModalOpen(true)}>Join Existing</button>
                         </div>
                     </div>
