@@ -17,6 +17,10 @@ import Client from './Client';
 import FileExplorer, { getFileIcon } from './FileExplorer';
 import './CodeEditor.css'; 
 
+// NEW IMPORTS FOR THE SUBMISSION ENGINE!
+import SubmissionReport from './SubmissionReport';
+import { evaluateSubmission } from '../services/evaluationService';
+
 const API_BASE_URL = 'https://vylop.onrender.com';
 const loadedRooms = new Set();
 
@@ -316,6 +320,9 @@ const CodeEditor = () => {
     const [isRunning, setIsRunning] = useState(false);
     const [isSaving, setIsSaving] = useState(false); 
 
+    const [isSubmitting, setIsSubmitting] = useState(false);
+    const [submissionResult, setSubmissionResult] = useState(null);
+
     const [users, setUsers] = useState([]); 
     const [currentUserRole, setCurrentUserRole] = useState('READ_ONLY');
 
@@ -382,6 +389,7 @@ const CodeEditor = () => {
         if (currentProblem) {
             setActiveBottomTab("testcases");
             setActiveTestCaseId(1);
+            setSubmissionResult(null); 
         } else {
             setActiveBottomTab("console");
         }
@@ -1337,7 +1345,6 @@ const CodeEditor = () => {
                 return acc;
             }, {});
             
-            // CRASH FIX: Add transformResponse to force Axios to leave output as a pure string
             const response = await axios.post(`${API_BASE_URL}/api/execute`, {
                 language: files[activeFile]?.language || "plaintext",
                 code: ydocRef.current.getText(activeFile).toString(),
@@ -1347,7 +1354,7 @@ const CodeEditor = () => {
                 envVars: envVarsPayload
             }, { transformResponse: [(data) => data] }); 
             
-            const outputText = response.data;
+            const outputText = typeof response.data === 'object' ? JSON.stringify(response.data, null, 2) : String(response.data);
             setOutput(outputText);
 
             const parsed = parseErrors(outputText, files[activeFile]?.language || "plaintext", files);
@@ -1375,6 +1382,42 @@ const CodeEditor = () => {
         } finally {
             setIsRunning(false);
         }
+    };
+
+    // ─── NEW FRONTEND SUBMISSION ENGINE ───
+    const handleSubmit = async () => {
+        if (!activeFile || !currentProblem) return;
+
+        setIsSubmitting(true);
+        setSubmissionResult(null);
+        setActiveBottomTab("submission"); 
+
+        const fileData = {};
+        Object.keys(files).forEach(key => { 
+            fileData[key] = ydocRef.current.getText(key).toString(); 
+        });
+        
+        const envVarsPayload = secrets.reduce((acc, curr) => {
+            if (curr.key.trim() && curr.value.trim()) acc[curr.key.trim()] = curr.value.trim();
+            return acc;
+        }, {});
+
+        const language = files[activeFile]?.language;
+        const code = ydocRef.current.getText(activeFile).toString();
+
+        const result = await evaluateSubmission(currentProblem, activeFile, language, code, fileData, envVarsPayload);
+        
+        setSubmissionResult(result);
+        
+        if (result.status === 'ACCEPTED') {
+            toast.success("Accepted!", { icon: '🟢' });
+        } else if (result.status === 'WRONG_ANSWER') {
+            toast.error("Wrong Answer", { icon: '🔴' });
+        } else {
+            toast.error("Evaluation Error");
+        }
+
+        setIsSubmitting(false);
     };
 
     const saveWorkspace = async () => {
@@ -1436,7 +1479,6 @@ const CodeEditor = () => {
     const renderFormattedOutput = (text) => {
         if (!text) return "// Run code to see output...";
         
-        // CRASH FIX: Safety check to guarantee text is a string
         const strText = typeof text === 'string' ? text : JSON.stringify(text, null, 2);
         const lines = strText.split('\n');
         
@@ -2020,7 +2062,7 @@ const CodeEditor = () => {
                                 </svg>
                             ) : (
                                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                    <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+                                    <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2-2z"></path>
                                     <polyline points="17 21 17 13 7 13 7 21"></polyline>
                                     <polyline points="7 3 7 8 15 8"></polyline>
                                 </svg>
@@ -2079,7 +2121,7 @@ const CodeEditor = () => {
                             <option value="markdown">Markdown</option>
                         </select>
                         
-                        <button className="btn btn-primary btn-icon" onClick={runCode} disabled={isRunning || !activeFile} title="Run Code">
+                        <button className="btn btn-secondary btn-icon" onClick={runCode} disabled={isRunning || !activeFile} title="Run Code" style={{ marginRight: '5px' }}>
                             {isRunning ? (
                                 <svg className="spinner" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                                     <path strokeLinecap="round" strokeLinejoin="round" d="M12 2v4m0 12v4M4.93 4.93l2.83 2.83m8.48 8.48l2.83 2.83M2 12h4m12 0h4M4.93 19.07l2.83-2.83m8.48-8.48l2.83-2.83" />
@@ -2090,6 +2132,30 @@ const CodeEditor = () => {
                                 </svg>
                             )}
                         </button>
+
+                        {/* ─── NEW SUBMIT BUTTON ─── */}
+                        {currentProblem && (
+                            <button 
+                                className="btn btn-primary" 
+                                onClick={handleSubmit} 
+                                disabled={isSubmitting || !activeFile} 
+                                title="Submit Code" 
+                                style={{ 
+                                    backgroundColor: '#2ea043', 
+                                    display: 'flex', 
+                                    alignItems: 'center', 
+                                    gap: '5px', 
+                                    padding: '0 15px', 
+                                    fontSize: '0.85rem' 
+                                }}
+                            >
+                                {isSubmitting ? (
+                                    <><svg className="spinner" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M12 2v4m0 12v4M4.93 4.93l2.83 2.83m8.48 8.48l2.83 2.83M2 12h4m12 0h4M4.93 19.07l2.83-2.83m8.48-8.48l2.83-2.83" /></svg> Evaluating...</>
+                                ) : (
+                                    <><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg> Submit</>
+                                )}
+                            </button>
+                        )}
                     </div>
                 </div>
 
@@ -2266,6 +2332,29 @@ const CodeEditor = () => {
                                     </svg>
                                     Test Result
                                 </button>
+
+                                {/* NEW: SUBMISSION TAB */}
+                                {currentProblem && (
+                                    <button 
+                                        style={{ 
+                                            background: 'transparent', 
+                                            border: 'none', 
+                                            color: activeBottomTab === 'submission' ? '#3fb950' : 'var(--text-muted)', 
+                                            borderBottom: activeBottomTab === 'submission' ? '2px solid #3fb950' : '2px solid transparent', 
+                                            padding: '10px 15px', 
+                                            cursor: 'pointer', 
+                                            fontWeight: 'bold', 
+                                            fontSize: '0.85rem' 
+                                        }}
+                                        onClick={() => setActiveBottomTab('submission')}
+                                    >
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{marginRight: '6px', verticalAlign: 'text-bottom'}}>
+                                            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+                                            <polyline points="22 4 12 14.01 9 11.01"></polyline>
+                                        </svg>
+                                        Submission
+                                    </button>
+                                )}
                                 
                                 <button 
                                     style={{ 
@@ -2332,6 +2421,16 @@ const CodeEditor = () => {
                                                 </div>
                                             </div>
                                         ))}
+                                    </div>
+                                )}
+
+                                {/* NEW: ISOLATED SUBMISSION UI */}
+                                {activeBottomTab === 'submission' && currentProblem && (
+                                    <div style={{ height: '100%', padding: '10px' }}>
+                                        <SubmissionReport 
+                                            isSubmitting={isSubmitting} 
+                                            result={submissionResult} 
+                                        />
                                     </div>
                                 )}
 
