@@ -180,9 +180,10 @@ const resolveFileName = (rawFile, files) => {
 // ─── Error Parsers ────────────────────────────────────────────────────────
 const parseJavaErrors = (output, files) => {
     const errors = [];
+    const strOutput = typeof output === 'string' ? output : JSON.stringify(output);
     const regex = /([a-zA-Z0-9_/\\.-]+\.java):(\d+):\s*(error|warning):\s*(.+)/g;
     let match;
-    while ((match = regex.exec(output)) !== null) {
+    while ((match = regex.exec(strOutput)) !== null) {
         errors.push({ 
             fileName: resolveFileName(match[1], files), 
             line: parseInt(match[2], 10), 
@@ -196,11 +197,12 @@ const parseJavaErrors = (output, files) => {
 
 const parsePythonErrors = (output, files) => {
     const errors = [];
+    const strOutput = typeof output === 'string' ? output : JSON.stringify(output);
     const regex = /File "([^"]+)",\s*line\s*(\d+)/g;
     const msgRegex = /^(\w+Error|\w+Exception):\s*(.+)/m;
     let match;
-    while ((match = regex.exec(output)) !== null) {
-        const msgMatch = output.slice(match.index).match(msgRegex);
+    while ((match = regex.exec(strOutput)) !== null) {
+        const msgMatch = strOutput.slice(match.index).match(msgRegex);
         errors.push({ 
             fileName: resolveFileName(match[1], files), 
             line: parseInt(match[2], 10), 
@@ -214,9 +216,10 @@ const parsePythonErrors = (output, files) => {
 
 const parseCppErrors = (output, files) => {
     const errors = [];
+    const strOutput = typeof output === 'string' ? output : JSON.stringify(output);
     const regex = /([a-zA-Z0-9_/\\.-]+\.(?:cpp|cc|h|hpp)):(\d+):(\d+):\s*(error|warning|note):\s*(.+)/g;
     let match;
-    while ((match = regex.exec(output)) !== null) {
+    while ((match = regex.exec(strOutput)) !== null) {
         errors.push({ 
             fileName: resolveFileName(match[1], files), 
             line: parseInt(match[2], 10), 
@@ -230,9 +233,10 @@ const parseCppErrors = (output, files) => {
 
 const parseGoErrors = (output, files) => {
     const errors = [];
+    const strOutput = typeof output === 'string' ? output : JSON.stringify(output);
     const regex = /\.?\/?([\w/.-]+\.go):(\d+):(\d+):\s*(.+)/g;
     let match;
-    while ((match = regex.exec(output)) !== null) {
+    while ((match = regex.exec(strOutput)) !== null) {
         errors.push({ 
             fileName: resolveFileName(match[1], files), 
             line: parseInt(match[2], 10), 
@@ -246,11 +250,12 @@ const parseGoErrors = (output, files) => {
 
 const parseRustErrors = (output, files) => {
     const errors = [];
+    const strOutput = typeof output === 'string' ? output : JSON.stringify(output);
     const regex = /-+>\s*([\w/.-]+\.rs):(\d+):(\d+)/g;
     const msgRegex = /^(error|warning)(\[[\w]+\])?:\s*(.+)/m;
     let match;
-    while ((match = regex.exec(output)) !== null) {
-        const before = output.slice(Math.max(0, match.index - 200), match.index);
+    while ((match = regex.exec(strOutput)) !== null) {
+        const before = strOutput.slice(Math.max(0, match.index - 200), match.index);
         const msgMatch = before.match(msgRegex);
         errors.push({ 
             fileName: resolveFileName(match[1], files), 
@@ -265,15 +270,19 @@ const parseRustErrors = (output, files) => {
 
 const parseErrors = (output, language, files) => {
     if (!output || output === 'Running...') return [];
-    const hasError = /(error|exception|traceback|failed|undefined|cannot|no such|warning)/i.test(output);
+    
+    // CRASH FIX: Ensure output is evaluated as a string
+    const strOutput = typeof output === 'string' ? output : JSON.stringify(output);
+    
+    const hasError = /(error|exception|traceback|failed|undefined|cannot|no such|warning)/i.test(strOutput);
     if (!hasError) return [];
     
     switch (language) {
-        case 'java': return parseJavaErrors(output, files);
-        case 'python': return parsePythonErrors(output, files);
-        case 'cpp': return parseCppErrors(output, files);
-        case 'go': return parseGoErrors(output, files);
-        case 'rust': return parseRustErrors(output, files);
+        case 'java': return parseJavaErrors(strOutput, files);
+        case 'python': return parsePythonErrors(strOutput, files);
+        case 'cpp': return parseCppErrors(strOutput, files);
+        case 'go': return parseGoErrors(strOutput, files);
+        case 'rust': return parseRustErrors(strOutput, files);
         default: return [];
     }
 };
@@ -1313,7 +1322,7 @@ const CodeEditor = () => {
 
         let inputToRun = userInput;
         if (currentProblem && activeBottomTab === "testcases") {
-            const selectedTc = currentProblem.testcases?.find(t => t.id === activeTestCaseId);
+            const selectedTc = (currentProblem.testcases || []).find(t => t.id === activeTestCaseId);
             if (selectedTc) {
                 inputToRun = selectedTc.rawInput;
             }
@@ -1341,7 +1350,8 @@ const CodeEditor = () => {
                 envVars: envVarsPayload
             });
             
-            const outputText = response.data;
+            // CRASH FIX: Guarantee output is a string so .split('\n') never crashes React
+            const outputText = typeof response.data === 'object' ? JSON.stringify(response.data, null, 2) : String(response.data);
             setOutput(outputText);
 
             const parsed = parseErrors(outputText, files[activeFile]?.language || "plaintext", files);
@@ -1429,7 +1439,10 @@ const CodeEditor = () => {
 
     const renderFormattedOutput = (text) => {
         if (!text) return "// Run code to see output...";
-        const lines = text.split('\n');
+        
+        // CRASH FIX: Guarantee text is a string
+        const strText = typeof text === 'string' ? text : JSON.stringify(text, null, 2);
+        const lines = strText.split('\n');
         
         return lines.map((line, index) => {
             const isError = /(error|exception|traceback|failed|at\s+[\w.]+\.)/i.test(line);
@@ -2284,7 +2297,7 @@ const CodeEditor = () => {
                                 {activeBottomTab === 'testcases' && currentProblem && (
                                     <div>
                                         <div style={{ display: 'flex', gap: '10px', marginBottom: '15px' }}>
-                                            {currentProblem.testcases?.map(tc => (
+                                            {(currentProblem.testcases || []).map(tc => (
                                                 <div 
                                                     key={tc.id} 
                                                     onClick={() => setActiveTestCaseId(tc.id)} 
@@ -2303,7 +2316,7 @@ const CodeEditor = () => {
                                             ))}
                                         </div>
                                         
-                                        {currentProblem.testcases?.filter(tc => tc.id === activeTestCaseId).map(tc => (
+                                        {(currentProblem.testcases || []).filter(tc => tc.id === activeTestCaseId).map(tc => (
                                             <div key={tc.id}>
                                                 <div style={{ marginBottom: '15px' }}>
                                                     <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '6px', fontWeight: 'bold' }}>
