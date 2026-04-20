@@ -129,8 +129,7 @@ const Dashboard = () => {
             <div style={{ padding: '40px 20px', maxWidth: '1200px', margin: '0 auto', width: '100%' }}>
                 
                 <div style={{ marginBottom: '40px', textAlign: 'center' }}>
-                    <h1 style={{ fontSize: '2.5rem', marginBottom: '10px', letterSpacing: '-0.5px' }}>Welcome back to <span style={{ color: '#58a6ff' }}>Vylop</span>.</h1>
-                    <p style={{ color: 'var(--text-muted)', fontSize: '1.1rem', maxWidth: '600px', margin: '0 auto' }}>
+                    <h1 style={{ fontSize: '2.5rem', marginBottom: '10px', letterSpacing: '-0.5px' }}>Welcome back to <span style={{ color: '#58a6ff' }}>Vylop 2.0</span> 🚀</h1>                    <p style={{ color: 'var(--text-muted)', fontSize: '1.1rem', maxWidth: '600px', margin: '0 auto' }}>
                         Create a sandbox to test ideas, start a secure technical interview, or join an active collaborative session.
                     </p>
                 </div>
