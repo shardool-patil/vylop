@@ -1,13 +1,18 @@
+/* ==========================================================================
+   ORIGINAL VYLOP CSS (PRESERVED)
+   ========================================================================== */
+
 .homePageWrapper {
     display: flex;
     flex-direction: column;
-    align-items: center;
-    justify-content: center;
+    /* align-items: center; -> Removed to allow full-width dashboard */
+    /* justify-content: center; -> Removed to keep header at the top */
     min-height: 100vh;
     background-color: #0d1117; 
     color: #c9d1d9;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
     position: relative;
+    overflow-y: auto; /* Added so the new dashboard can scroll */
 }
 
 .dashboard-layout {
@@ -162,7 +167,6 @@
     gap: 16px;
 }
 
-/* --- DASHBOARD CARD STYLES & ANIMATIONS --- */
 .workspace-card {
     background-color: #161b22;
     border: 1px solid #30363d;
@@ -194,7 +198,6 @@
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
 }
 
-/* Direct targeting of the JSX tags inside the card */
 .workspace-card h4 {
     margin: 0;
     font-size: 1.1rem;
@@ -230,7 +233,6 @@
     color: #f85149 !important;
 }
 
-/* --- MODAL STYLES --- */
 .modal-overlay {
     position: fixed;
     top: 0; left: 0; right: 0; bottom: 0;
@@ -271,14 +273,17 @@
     to { transform: scale(1); opacity: 1; }
 }
 
-/* --- HEADER NAV & USER PROFILE PILL --- */
 .header-nav {
-    position: absolute;
-    top: 25px;
-    right: 40px;
     display: flex;
+    justify-content: space-between;
     align-items: center;
-    z-index: 10;
+    padding: 20px 40px;
+    border-bottom: 1px solid #30363d;
+    position: sticky;
+    top: 0;
+    background-color: rgba(13, 17, 23, 0.95);
+    backdrop-filter: blur(10px);
+    z-index: 100;
 }
 
 .user-profile-pill {
@@ -344,13 +349,73 @@
 }
 
 footer {
-    position: absolute;
-    bottom: 20px;
+    text-align: center;
+    padding: 20px;
     color: #8b949e;
+    margin-top: auto;
 }
 
 footer h4 {
     margin: 0;
     font-size: 13px;
     font-weight: normal;
+}
+
+
+/* ==========================================================================
+   NEW ADDITIONS (DASHBOARD CARDS, BRANDING, MODERN INPUTS)
+   ========================================================================== */
+
+.brand-logo {
+    font-size: 1.5rem;
+    font-weight: 700;
+    font-family: 'JetBrains Mono', monospace;
+    color: #c9d1d9;
+}
+
+.brand-prompt { 
+    color: #58a6ff; 
+    margin-right: 5px; 
+}
+
+.brand-cursor {
+    display: inline-block;
+    width: 10px;
+    height: 1.2rem;
+    background-color: #58a6ff;
+    margin-left: 2px;
+    vertical-align: text-bottom;
+    animation: blink 1s step-end infinite;
+}
+
+@keyframes blink { 
+    50% { opacity: 0; } 
+}
+
+.btn-primary { 
+    background-color: #238636; 
+    color: white; 
+    padding: 10px 16px;
+}
+
+.btn-primary:hover { 
+    background-color: #2ea043; 
+}
+
+.modern-input {
+    padding: 12px 14px;
+    border-radius: 6px;
+    outline: none;
+    border: 1px solid #30363d;
+    background-color: #0d1117;
+    color: #c9d1d9;
+    font-size: 14px;
+    transition: all 0.2s ease;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.modern-input:focus {
+    border-color: #58a6ff;
+    box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.3);
 }
