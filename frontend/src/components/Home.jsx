@@ -188,7 +188,7 @@ const Home = () => {
             </div>
 
             {/* MAIN CONTENT - The 3-Card Dashboard */}
-            <div style={{ padding: '40px 20px', maxWidth: '1200px', margin: '0 auto', width: '100%', boxSizing: 'border-box' }}>
+            <div style={{ padding: '0 20px', maxWidth: '1200px', margin: '0 auto', width: '100%', boxSizing: 'border-box', flex: 1 }}>
                 
                 <div style={{ marginBottom: '50px', textAlign: 'center' }}>
                     <h1 style={{ fontSize: '2.8rem', marginBottom: '15px', letterSpacing: '-0.5px', color: '#fff' }}>Welcome back to <span style={{ color: '#58a6ff' }}>Vylop</span>.</h1>
