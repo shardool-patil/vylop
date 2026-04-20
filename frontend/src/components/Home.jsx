@@ -50,12 +50,23 @@ const Home = () => {
         navigate('/auth');
     };
 
-    const handleCreateNew = () => {
+    // FIXED: Now registers the room in the DB before navigating so it can be saved!
+    const handleCreateNew = async () => {
         const id = uuidv4();
+        const defaultRoomName = "Dev Workspace";
+
+        try {
+            await axios.post(
+                `${API_BASE_URL}/api/workspace/${id}/register?username=${encodeURIComponent(username)}&roomName=${encodeURIComponent(defaultRoomName)}`
+            );
+        } catch (error) {
+            console.warn("Could not pre-register room name:", error);
+        }
+
         navigate(`/room/${id}`, {
             state: {
                 username,
-                roomName: "Dev Workspace",
+                roomName: defaultRoomName,
             },
         });
     };
