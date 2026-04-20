@@ -1,18 +1,16 @@
-/* ==========================================================================
-   ORIGINAL VYLOP CSS (PRESERVED)
-   ========================================================================== */
-
+/* PAGE WRAPPER & LAYOUT */
 .homePageWrapper {
     display: flex;
     flex-direction: column;
-    /* align-items: center; -> Removed to allow full-width dashboard */
-    /* justify-content: center; -> Removed to keep header at the top */
     min-height: 100vh;
     background-color: #0d1117; 
     color: #c9d1d9;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
     position: relative;
-    overflow-y: auto; /* Added so the new dashboard can scroll */
+    overflow-y: auto;
+    
+    /* ADD PADDING TO MAKE ROOM FOR FIXED HEADER */
+    padding-top: 80px; 
 }
 
 .dashboard-layout {
@@ -21,11 +19,33 @@
     gap: 40px;
     width: 100%;
     max-width: 1200px;
-    padding: 40px;
+    padding: 20px 40px; /* Reduced top padding */
     justify-content: center;
     align-items: flex-start;
 }
 
+/* BRAND LOGO */
+.brand-logo {
+    font-size: 1.5rem;
+    font-weight: 700;
+    font-family: 'JetBrains Mono', monospace;
+    color: #c9d1d9;
+}
+
+.brand-prompt { color: #58a6ff; margin-right: 5px; }
+.brand-cursor {
+    display: inline-block;
+    width: 10px;
+    height: 1.2rem;
+    background-color: #58a6ff;
+    margin-left: 2px;
+    vertical-align: text-bottom;
+    animation: blink 1s step-end infinite;
+}
+
+@keyframes blink { 50% { opacity: 0; } }
+
+/* FORM WRAPPER UPDATES */
 .formWrapper {
     background-color: #161b22;
     border: 1px solid #30363d;
@@ -115,13 +135,6 @@
     background-color: #b3261e;
 }
 
-.createInfo {
-    margin: 0 auto;
-    margin-top: 15px;
-    font-size: 13px;
-    color: #8b949e;
-}
-
 .createNewBtn {
     color: #58a6ff;
     text-decoration: none;
@@ -135,11 +148,13 @@
     border-color: #79c0ff;
 }
 
+/* RECENT WORKSPACES UPDATES for polished look */
 .recent-workspaces-wrapper {
     flex: 1;
     min-width: 350px;
     display: flex;
     flex-direction: column;
+    margin-top: 0;
 }
 
 .dashboard-title {
@@ -167,6 +182,7 @@
     gap: 16px;
 }
 
+/* --- DASHBOARD CARD STYLES & ANIMATIONS --- */
 .workspace-card {
     background-color: #161b22;
     border: 1px solid #30363d;
@@ -178,18 +194,6 @@
     flex-direction: column;
     gap: 12px;
     animation: cardEntrance 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
-}
-
-.workspace-card:nth-child(1) { animation-delay: 0.05s; }
-.workspace-card:nth-child(2) { animation-delay: 0.1s; }
-.workspace-card:nth-child(3) { animation-delay: 0.15s; }
-.workspace-card:nth-child(4) { animation-delay: 0.2s; }
-.workspace-card:nth-child(5) { animation-delay: 0.25s; }
-.workspace-card:nth-child(n+6) { animation-delay: 0.3s; }
-
-@keyframes cardEntrance {
-    from { opacity: 0; transform: translateY(15px); }
-    to { opacity: 1; transform: translateY(0); }
 }
 
 .workspace-card:hover {
@@ -233,6 +237,7 @@
     color: #f85149 !important;
 }
 
+/* --- MODAL STYLES --- */
 .modal-overlay {
     position: fixed;
     top: 0; left: 0; right: 0; bottom: 0;
@@ -273,38 +278,50 @@
     to { transform: scale(1); opacity: 1; }
 }
 
+/* NEW FULL-WIDTH HEADER NAV */
 .header-nav {
+    position: fixed; /* NEW: Keep header visible on scroll */
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 80px;
+    background-color: rgba(13, 17, 23, 0.95); /* Semi-transparent dark bg */
+    backdrop-filter: blur(10px); /* Translucent effect */
+    border-bottom: 1px solid #30363d;
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 20px 40px;
-    border-bottom: 1px solid #30363d;
-    position: sticky;
-    top: 0;
-    background-color: rgba(13, 17, 23, 0.95);
-    backdrop-filter: blur(10px);
+    padding: 0 40px;
     z-index: 100;
+    box-sizing: border-box;
 }
 
-.user-profile-pill {
+/* LEETCODE-STYLE USER PROFILE WIDGET */
+.user-profile-widget {
+    position: relative;
+}
+
+.profile-trigger {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    cursor: pointer;
+    transition: all 0.2s ease;
     display: flex;
     align-items: center;
-    background-color: #161b22;
-    border: 1px solid #30363d;
-    border-radius: 50px;
-    padding: 6px 14px 6px 6px; 
-    gap: 12px;
-    box-shadow: 0 4px 12px rgba(1, 4, 9, 0.3);
-    transition: border-color 0.2s ease;
+    justify-content: center;
+    border: 2px solid transparent;
 }
 
-.user-profile-pill:hover {
+.profile-trigger:hover,
+.profile-trigger.active {
     border-color: #58a6ff;
+    background-color: #161b22;
 }
 
-.user-avatar {
-    width: 30px;
-    height: 30px;
+.user-avatar-leetcode {
+    width: 34px;
+    height: 34px;
     background-color: #2ea043; 
     color: #ffffff;
     border-radius: 50%;
@@ -312,60 +329,102 @@
     justify-content: center;
     align-items: center;
     font-weight: 700;
-    font-size: 15px;
+    font-size: 16px;
     box-shadow: 0 2px 4px rgba(46, 160, 67, 0.4);
 }
 
-.user-name {
+.profile-dropdown-menu {
+    position: absolute;
+    top: 55px; /* Adjust based on header height and trigger size */
+    right: 0;
+    width: 200px;
+    background-color: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 10px;
+    padding: 15px;
+    box-shadow: 0 8px 24px rgba(1, 4, 9, 0.6);
+    animation: scaleIn 0.2s ease-out;
+    z-index: 101;
+}
+
+@keyframes scaleIn {
+    from { transform: scale(0.95); opacity: 0; }
+    to { transform: scale(1); opacity: 1; }
+}
+
+.profile-dropdown-menu .menu-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 10px;
+}
+
+.profile-dropdown-menu .user-avatar-menu {
+    width: 36px;
+    height: 36px;
+    background-color: #2ea043; 
+    color: #ffffff;
+    border-radius: 50%;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    font-weight: 700;
+    font-size: 16px;
+}
+
+.profile-dropdown-menu .user-name-menu {
     font-size: 14px;
     font-weight: 600;
     color: #c9d1d9;
-    letter-spacing: 0.5px;
     text-transform: capitalize;
 }
 
-.divider-vertical {
-    height: 18px;
-    width: 1px;
+.profile-dropdown-menu .divider-horizontal {
+    height: 1px;
     background-color: #30363d;
+    margin: 10px -15px; /* Span full menu width */
 }
 
-.logout-btn-icon {
+.profile-dropdown-menu .menu-item {
+    width: 100%;
     background: none;
     border: none;
+    padding: 8px 10px;
     color: #8b949e;
     cursor: pointer;
-    padding: 6px;
+    font-size: 14px;
+    font-weight: 500;
+    border-radius: 6px;
+    transition: all 0.2s ease;
     display: flex;
     align-items: center;
-    justify-content: center;
-    transition: all 0.2s ease;
-    font-size: 13px;
-    font-weight: 500;
+    gap: 8px;
+    text-align: left;
 }
 
-.logout-btn-icon:hover {
-    color: #f85149; 
+.profile-dropdown-menu .menu-item:hover {
+    background-color: #30363d;
+    color: #f85149;
 }
 
+.profile-dropdown-menu .menu-item svg {
+    color: #f85149;
+}
+
+/* FOOTER UPDATES */
 footer {
+    position: static; /* Remove absolute positioning */
+    width: 100%;
     text-align: center;
-    padding: 20px;
     color: #8b949e;
-    margin-top: auto;
+    padding: 20px;
+    box-sizing: border-box;
+    margin-top: auto; /* Push to bottom of content in wrapper */
 }
 
-footer h4 {
-    margin: 0;
-    font-size: 13px;
-    font-weight: normal;
-}
+footer h4 { margin: 0; font-size: 13px; font-weight: normal; }
 
-
-/* ==========================================================================
-   NEW ADDITIONS (DASHBOARD CARDS, BRANDING, MODERN INPUTS)
-   ========================================================================== */
-
+/* --- NEW ADDITIONS (BRANDING & MODERN INPUTS) --- */
 .brand-logo {
     font-size: 1.5rem;
     font-weight: 700;
@@ -373,11 +432,7 @@ footer h4 {
     color: #c9d1d9;
 }
 
-.brand-prompt { 
-    color: #58a6ff; 
-    margin-right: 5px; 
-}
-
+.brand-prompt { color: #58a6ff; margin-right: 5px; }
 .brand-cursor {
     display: inline-block;
     width: 10px;
@@ -388,9 +443,7 @@ footer h4 {
     animation: blink 1s step-end infinite;
 }
 
-@keyframes blink { 
-    50% { opacity: 0; } 
-}
+@keyframes blink { 50% { opacity: 0; } }
 
 .btn-primary { 
     background-color: #238636; 
