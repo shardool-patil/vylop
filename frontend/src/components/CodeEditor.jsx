@@ -102,6 +102,43 @@ const MOCK_PROBLEMS = {
             "1 <= s.length <= 10^4", 
             "s consists of parentheses only '()[]{}'."
         ]
+    },
+    "climbing-stairs": {
+        id: "climbing-stairs",
+        title: "70. Climbing Stairs",
+        difficulty: "Medium",
+        topic: "Dynamic Programming",
+        description: "You are climbing a staircase. It takes `n` steps to reach the top.\n\nEach time you can either climb `1` or `2` steps. In how many distinct ways can you climb to the top?\n\n---\n**I/O Format:**\nLine 1: An integer `n`",
+        testcases: [
+            { 
+                id: 1, 
+                name: "Case 1", 
+                displayInput: "n = 2", 
+                rawInput: "2", 
+                expectedOutput: "2" 
+            },
+            { 
+                id: 2, 
+                name: "Case 2", 
+                displayInput: "n = 3", 
+                rawInput: "3", 
+                expectedOutput: "3" 
+            },
+            { 
+                id: 3, 
+                name: "Case 3", 
+                displayInput: "n = 5", 
+                rawInput: "5", 
+                expectedOutput: "8" 
+            }
+        ],
+        examples: [
+            { input: "n = 2", output: "2", explanation: "1. 1 step + 1 step\n2. 2 steps" },
+            { input: "n = 3", output: "3", explanation: "1. 1 step + 1 step + 1 step\n2. 1 step + 2 steps\n3. 2 steps + 1 step" }
+        ],
+        constraints: [
+            "1 <= n <= 45"
+        ]
     }
 };
 
@@ -1276,7 +1313,7 @@ const CodeEditor = () => {
 
         let inputToRun = userInput;
         if (currentProblem && activeBottomTab === "testcases") {
-            const selectedTc = currentProblem.testcases.find(t => t.id === activeTestCaseId);
+            const selectedTc = currentProblem.testcases?.find(t => t.id === activeTestCaseId);
             if (selectedTc) {
                 inputToRun = selectedTc.rawInput;
             }
@@ -1296,7 +1333,7 @@ const CodeEditor = () => {
             }, {});
             
             const response = await axios.post(`${API_BASE_URL}/api/execute`, {
-                language: files[activeFile].language,
+                language: files[activeFile]?.language || "plaintext",
                 code: ydocRef.current.getText(activeFile).toString(),
                 input: inputToRun, 
                 mainFile: activeFile,
@@ -1307,7 +1344,7 @@ const CodeEditor = () => {
             const outputText = response.data;
             setOutput(outputText);
 
-            const parsed = parseErrors(outputText, files[activeFile].language, files);
+            const parsed = parseErrors(outputText, files[activeFile]?.language || "plaintext", files);
             if (parsed.length > 0) {
                 const byFile = {};
                 parsed.forEach(err => { 
@@ -2091,7 +2128,7 @@ const CodeEditor = () => {
                                 </div>
                                 
                                 <div style={{ marginTop: '20px' }}>
-                                    {currentProblem.examples.map((ex, i) => (
+                                    {currentProblem.examples?.map((ex, i) => (
                                         <div key={i} style={{ marginBottom: '20px' }}>
                                             <strong style={{ fontSize: '0.9rem', color: '#e1e4e8' }}>Example {i + 1}:</strong>
                                             <div style={{ backgroundColor: 'rgba(255,255,255,0.03)', borderLeft: '3px solid var(--border)', padding: '12px', borderRadius: '0 8px 8px 0', marginTop: '8px', fontFamily: 'JetBrains Mono, monospace', fontSize: '0.85rem' }}>
@@ -2106,7 +2143,7 @@ const CodeEditor = () => {
                                 <div style={{ marginTop: '10px' }}>
                                     <strong style={{ fontSize: '0.9rem', color: '#e1e4e8' }}>Constraints:</strong>
                                     <ul style={{ paddingLeft: '20px', marginTop: '10px', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-                                        {currentProblem.constraints.map((c, i) => (
+                                        {currentProblem.constraints?.map((c, i) => (
                                             <li key={i} style={{ marginBottom: '6px' }}>
                                                 <code style={{ backgroundColor: 'rgba(255,255,255,0.05)', padding: '3px 6px', borderRadius: '4px', color: '#e1e4e8', fontFamily: 'JetBrains Mono, monospace' }}>{c}</code>
                                             </li>
@@ -2132,7 +2169,7 @@ const CodeEditor = () => {
                                     <Editor 
                                         path={activeFile} 
                                         height="100%" 
-                                        language={files[activeFile]?.language === "cpp" ? "cpp" : files[activeFile]?.language} 
+                                        language={files[activeFile]?.language === "cpp" ? "cpp" : files[activeFile]?.language || "plaintext"} 
                                         theme={editorTheme} 
                                         onMount={handleEditorDidMount} 
                                         onChange={handleEditorChange}
@@ -2247,7 +2284,7 @@ const CodeEditor = () => {
                                 {activeBottomTab === 'testcases' && currentProblem && (
                                     <div>
                                         <div style={{ display: 'flex', gap: '10px', marginBottom: '15px' }}>
-                                            {currentProblem.testcases.map(tc => (
+                                            {currentProblem.testcases?.map(tc => (
                                                 <div 
                                                     key={tc.id} 
                                                     onClick={() => setActiveTestCaseId(tc.id)} 
@@ -2266,7 +2303,7 @@ const CodeEditor = () => {
                                             ))}
                                         </div>
                                         
-                                        {currentProblem.testcases.filter(tc => tc.id === activeTestCaseId).map(tc => (
+                                        {currentProblem.testcases?.filter(tc => tc.id === activeTestCaseId).map(tc => (
                                             <div key={tc.id}>
                                                 <div style={{ marginBottom: '15px' }}>
                                                     <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '6px', fontWeight: 'bold' }}>
