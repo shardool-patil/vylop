@@ -271,7 +271,6 @@ const parseRustErrors = (output, files) => {
 const parseErrors = (output, language, files) => {
     if (!output || output === 'Running...') return [];
     
-    // CRASH FIX: Ensure output is evaluated as a string
     const strOutput = typeof output === 'string' ? output : JSON.stringify(output);
     
     const hasError = /(error|exception|traceback|failed|undefined|cannot|no such|warning)/i.test(strOutput);
@@ -305,12 +304,10 @@ const CodeEditor = () => {
     const [openFiles, setOpenFiles] = useState([]);
     const [activeFile, setActiveFile] = useState(null);
     
-    // NEW INTERVIEW STATE
     const [currentProblem, setCurrentProblem] = useState(null);
     const [isQuestionBankOpen, setIsQuestionBankOpen] = useState(false);
     const [problemSearch, setProblemSearch] = useState("");
     
-    // NEW: TABS STATE FOR CONSOLE/TESTCASES
     const [activeBottomTab, setActiveBottomTab] = useState("console"); 
     const [activeTestCaseId, setActiveTestCaseId] = useState(1);
 
@@ -381,7 +378,6 @@ const CodeEditor = () => {
         isHostRef.current = currentUserRole === 'HOST';
     }, [currentUserRole]);
 
-    // Force tab to testcases when a problem is pushed
     useEffect(() => {
         if (currentProblem) {
             setActiveBottomTab("testcases");
@@ -1341,6 +1337,7 @@ const CodeEditor = () => {
                 return acc;
             }, {});
             
+            // CRASH FIX: Add transformResponse to force Axios to leave output as a pure string
             const response = await axios.post(`${API_BASE_URL}/api/execute`, {
                 language: files[activeFile]?.language || "plaintext",
                 code: ydocRef.current.getText(activeFile).toString(),
@@ -1348,10 +1345,9 @@ const CodeEditor = () => {
                 mainFile: activeFile,
                 files: fileData,
                 envVars: envVarsPayload
-            });
+            }, { transformResponse: [(data) => data] }); 
             
-            // CRASH FIX: Guarantee output is a string so .split('\n') never crashes React
-            const outputText = typeof response.data === 'object' ? JSON.stringify(response.data, null, 2) : String(response.data);
+            const outputText = response.data;
             setOutput(outputText);
 
             const parsed = parseErrors(outputText, files[activeFile]?.language || "plaintext", files);
@@ -1440,7 +1436,7 @@ const CodeEditor = () => {
     const renderFormattedOutput = (text) => {
         if (!text) return "// Run code to see output...";
         
-        // CRASH FIX: Guarantee text is a string
+        // CRASH FIX: Safety check to guarantee text is a string
         const strText = typeof text === 'string' ? text : JSON.stringify(text, null, 2);
         const lines = strText.split('\n');
         
